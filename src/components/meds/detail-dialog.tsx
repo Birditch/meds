@@ -7,7 +7,7 @@ import { deleteMedication } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import { fmtDate, type ISODate } from "@/lib/meds/dates";
+import { addDays, fmtDate, weekdayCN, type ISODate } from "@/lib/meds/dates";
 import {
   describeReserve,
   describeShortfall,
@@ -165,7 +165,10 @@ export function DetailDialog({
                 {status.plan.beforeFirst && (
                   <p className="text-amber-800 dark:text-amber-300">
                     等不到下次就诊：{fmtDate(status.plan.beforeFirst.from.date)} 起断药，就诊前还缺{" "}
-                    {fmtQty(status.plan.beforeFirst.shortfall)} 颗。
+                    {fmtQty(status.plan.beforeFirst.shortfall)} 颗；
+                    {status.plan.beforeFirst.latestVisit
+                      ? `要不动用储备，最晚 ${fmtDate(status.plan.beforeFirst.latestVisit)} 就诊。`
+                      : "断药前已没有周四可以就诊，需要提前加诊。"}
                   </p>
                 )}
                 <ul className="grid gap-1">
@@ -174,7 +177,7 @@ export function DetailDialog({
                       <span className="w-12 text-muted-foreground">{visitOrdinal(i)}</span>
                       <span>{fmtDate(v.date)}</span>
                       <span className="text-muted-foreground">
-                        到诊剩 {fmtQty(v.stockBefore)} 颗
+                        {v.date === now.date ? "现在" : `${weekdayCN(addDays(v.date, -1))}晚`}剩 {fmtQty(v.stockBefore)} 颗
                         {packNote(v.stockBefore, medication) && `（${packNote(v.stockBefore, medication)}）`}
                       </span>
                       <span className="ml-auto">
@@ -186,7 +189,10 @@ export function DetailDialog({
                             {v.packs !== null && <span className="text-muted-foreground">（缺 {fmtQty(v.need)} 颗）</span>}
                           </>
                         )}
-                        <span className="text-muted-foreground"> · 吃到 {fmtDate(v.coverUntil)}{v.estimated ? "（估算）" : ""}</span>
+                        <span className="text-muted-foreground">
+                          {" "}
+                          · 吃到 {fmtDate(v.coverUntil)} 晚{v.estimated ? "（估算）" : ""}
+                        </span>
                       </span>
                     </li>
                   ))}

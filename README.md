@@ -17,9 +17,13 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
 - **Visit plan (就诊计划)**: enter the next visits (下次, 下下次, …). For each one and each
   medication it works out how many pills — and how many whole boxes / bottles — to get so the
   stock lasts to the following visit without touching the reserve. Extra pills from rounding up
-  to whole packs carry over to the next visit. Visits are usually every 4 weeks at the start of
-  a month (days 1–10, when the hospital has imported drugs): the add form offers "4 weeks later"
-  and "pushed back to the month start", and the last visit is assumed to be followed by one.
+  to whole packs carry over to the next visit. Visits are on **Thursdays**: a visit counts the
+  stock left after Wednesday evening's dose, and what it prescribes must last through the
+  Wednesday evening before the next visit. They are usually every 4 weeks at the start of a
+  month (days 1–10, when the hospital has imported drugs): the add form offers the Thursday
+  about 4 weeks later and that pushed back to a month start, the last visit is assumed to be
+  followed by one, and a visit on another weekday is flagged. If stock runs out before the
+  first visit, it names the last Thursday that would still avoid the gap.
 - **Hospital stays (住院)**: no medication is taken from home stock on those days (start and end
   included), so run-out dates and visit needs move back accordingly.
 - **Stock chart**: vertical jumps on refills, slope changes on regimen changes, a "today" line,

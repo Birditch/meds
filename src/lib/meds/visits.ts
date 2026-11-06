@@ -13,9 +13,11 @@
  * the amounts never double-count. With whole boxes or bottles, C_k ≥ S_k and the extra pills carry
  * over: visit k arrives with the current-timeline stock plus C_{k−1} − S_{k−1}.
  *
- * Visits are usually about every 4 weeks, at the start of a month (days 1–10, when the
- * hospital has imported drugs). The last visit has no successor, so its period is assumed
- * to run to the usual next one: 4 weeks later, pushed back whole weeks into a month start.
+ * Visits are on Thursdays, usually every 4 weeks, at the start of a month (days 1–10, when
+ * the hospital has imported drugs). A visit counts the stock left after Wednesday evening and
+ * must cover through the Wednesday evening before the next visit. The last visit has no
+ * successor, so its period is assumed to run to the usual next one: the Thursday 4 weeks
+ * later, pushed back whole weeks into a month start.
  */
 
 import { addDays, diffDays, fromDayNum, toDayNum, type ISODate } from "./dates";
@@ -43,8 +45,11 @@ export interface VisitNeed {
 }
 
 export interface VisitPlan {
-  /** Stock runs short before the first upcoming visit: how much and from when. */
-  beforeFirst: { shortfall: number; from: SlotRef } | null;
+  /**
+   * Stock runs short before the first upcoming visit: how much, from when, and the last
+   * Thursday (not before today) a visit would still prevent it, if any.
+   */
+  beforeFirst: { shortfall: number; from: SlotRef; latestVisit: ISODate | null } | null;
   visits: VisitNeed[];
 }
 
@@ -59,43 +64,69 @@ export interface VisitSchedule {
 export const MONTH_START_DAYS = 10;
 export const isMonthStart = (date: ISODate) => Number(date.slice(8, 10)) <= MONTH_START_DAYS;
 
-/** The usual follow-up: 4 weeks later, and that pushed back by whole weeks into a month start. */
+/**
+ * Visits are on Thursdays. A visit's prescription starts with that Thursday's doses; the
+ * stock counted for it is what is left after Wednesday evening's dose.
+ */
+export const CLINIC_WEEKDAY = 4; // 0 = Sunday
+export const CLINIC_DAY = "周四";
+const weekdayOf = (date: ISODate) => (((toDayNum(date) + 4) % 7) + 7) % 7; // 1970-01-01 was a Thursday
+export const isClinicDay = (date: ISODate) => weekdayOf(date) === CLINIC_WEEKDAY;
+/** The first clinic day (Thursday) on or after `date`. */
+export const clinicDayOnOrAfter = (date: ISODate) => addDays(date, (CLINIC_WEEKDAY - weekdayOf(date) + 7) % 7);
+/** The last clinic day (Thursday) on or before `date`. */
+export const clinicDayOnOrBefore = (date: ISODate) => addDays(date, -((weekdayOf(date) - CLINIC_WEEKDAY + 7) % 7));
+/** The clinic day (Thursday) closest to `date`, at most 3 days away. */
+export const nearestClinicDay = (date: ISODate) => addDays(date, ((CLINIC_WEEKDAY - weekdayOf(date) + 10) % 7) - 3);
+
+/** The usual follow-up: the Thursday about 4 weeks later, pushed back whole weeks into a month start. */
 export function usualNextVisit(date: ISODate): { fourWeeks: ISODate; monthStart: ISODate } {
-  const fourWeeks = addDays(date, 28);
+  const fourWeeks = nearestClinicDay(addDays(date, 28));
   let monthStart = fourWeeks;
   while (!isMonthStart(monthStart)) monthStart = addDays(monthStart, 7);
   return { fourWeeks, monthStart };
 }
 
-/** The first month-start day on or after `date`. */
-export function nearestMonthStart(date: ISODate): ISODate {
-  if (isMonthStart(date)) return date;
-  const [y, m] = date.split("-").map(Number);
-  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+/** The first month-start Thursday on or after `date`. */
+export function nearestMonthStartVisit(date: ISODate): ISODate {
+  let d = clinicDayOnOrAfter(date);
+  while (!isMonthStart(d)) d = addDays(d, 7);
+  return d;
+}
+
+/** "4 周", "4 周 6 天" */
+const weeksText = (days: number) => (days % 7 ? `${Math.floor(days / 7)} 周 ${days % 7} 天` : `${days / 7} 周`);
+
+export interface VisitSuggestions {
+  /** In date order. */
+  options: { label: string; date: ISODate }[];
+  /** The one to preselect: the usual month-start Thursday. */
+  preferred: ISODate;
 }
 
 /**
- * Dates to offer for the next visit: 4 weeks after the latest visit and, when that is not a
- * month start, the same weekday pushed back into one. Without a recent visit, count from today
- * and also offer the nearest month start.
+ * Thursdays to offer for the next visit: about 4 weeks after the latest visit and, when that
+ * is not a month start, pushed back whole weeks into one. Without a recent visit, count from
+ * today and also offer the nearest month-start Thursday.
  */
-export function suggestNextVisit(last: ISODate | null, today: ISODate): { label: string; date: ISODate }[] {
-  const out: { label: string; date: ISODate }[] = [];
-  const fromLast = !!last && addDays(last, 28) >= today;
+export function suggestNextVisit(last: ISODate | null, today: ISODate): VisitSuggestions {
+  const options: { label: string; date: ISODate }[] = [];
+  const add = (label: string, date: ISODate) => {
+    if (!options.some((o) => o.date === date)) options.push({ label, date });
+  };
+  const fromLast = !!last && usualNextVisit(last).fourWeeks >= today;
   const base = fromLast ? last! : today;
-  if (!fromLast) {
-    const nearest = nearestMonthStart(today);
-    if (nearest !== today) out.push({ label: "最近的月初", date: nearest });
-  }
-  const from = fromLast ? "距上次 " : "";
   const { fourWeeks, monthStart } = usualNextVisit(base);
+  const span = (d: ISODate) => (fromLast ? `距上次 ${weeksText(diffDays(d, base))}` : "");
   if (fourWeeks === monthStart) {
-    out.push({ label: `${from}4 周（月初）`, date: fourWeeks });
+    add(fromLast ? `${span(fourWeeks)}（月初）` : "4 周后（月初）", fourWeeks);
   } else {
-    const weeks = 4 + diffDays(monthStart, fourWeeks) / 7;
-    out.push({ label: `${from}4 周`, date: fourWeeks }, { label: `顺延到月初（${from}${weeks} 周）`, date: monthStart });
+    add(fromLast ? span(fourWeeks) : "4 周后", fourWeeks);
+    add(fromLast ? `顺延到月初（${span(monthStart)}）` : "顺延到月初", monthStart);
   }
-  return out;
+  if (!fromLast) add("最近的月初", nearestMonthStartVisit(today));
+  options.sort((a, b) => (a.date < b.date ? -1 : 1));
+  return { options, preferred: monthStart };
 }
 
 /** Upcoming visits (today included) with the period each one covers. */
@@ -138,7 +169,8 @@ export function planVisits(
         firstShort ??= { date: snap.date, slot: SLOTS[k] };
       });
     }
-    return { total, firstShort };
+    // Assigned inside the callback, which TypeScript's narrowing does not follow.
+    return { total, firstShort: firstShort as SlotRef | null };
   };
 
   const baseStock = (date: ISODate) =>
@@ -159,7 +191,11 @@ export function planVisits(
   let beforeFirst: VisitPlan["beforeFirst"] = null;
   if (schedule.length > 0) {
     const gap = shortIn(toDayNum(now.date), toDayNum(schedule[0].date));
-    if (gap.total > 0 && gap.firstShort) beforeFirst = { shortfall: gap.total, from: gap.firstShort };
+    if (gap.total > 0 && gap.firstShort) {
+      // A visit's supply counts before that day's morning dose, so the gap's own day still works.
+      const latest = clinicDayOnOrBefore(gap.firstShort.date);
+      beforeFirst = { shortfall: gap.total, from: gap.firstShort, latestVisit: latest >= now.date ? latest : null };
+    }
   }
   return { beforeFirst, visits };
 }

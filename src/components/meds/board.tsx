@@ -225,6 +225,7 @@ function MedicationCard({
           <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
             <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
             等不到下次就诊：就诊前还缺 {fmtQty(status.plan.beforeFirst.shortfall)} 颗
+            {status.plan.beforeFirst.latestVisit ? `，最晚 ${fmtDate(status.plan.beforeFirst.latestVisit)} 就诊` : "，需提前加诊"}
           </p>
         )}
         {shortfall && (
