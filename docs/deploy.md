@@ -76,6 +76,20 @@ curl -s http://127.0.0.1:28100/api/health                 # {"ok":true}
    re-checks it inside every Server Action. Without `CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` it
    answers 503 rather than run unprotected.
 
+   Current setup (2026-11-06):
+
+   | | |
+   |---|---|
+   | DNS | `A meds.birditch.net → 13.230.90.76`, proxied |
+   | Team domain | `withered-hall-b5c3.cloudflareaccess.com` |
+   | Access application | "meds 药品余量", self-hosted, `meds.birditch.net`, session 24h |
+   | Policy | "Allow Owner Email" — allow, include one email (the account owner) |
+   | Login method | the account's existing Cloudflare-account login (no change to identity providers) |
+
+   To let someone else in, add their email to that policy in Zero Trust → Access → Applications;
+   no redeploy is needed. Changing the application (new AUD) means updating `CF_ACCESS_AUD`
+   in `.env` and `docker compose up -d --force-recreate`.
+
 ## Troubleshooting
 
 | Symptom | Check |
