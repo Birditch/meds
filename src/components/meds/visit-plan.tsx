@@ -1,6 +1,7 @@
 "use client";
 
 import { CalendarClockIcon, FileDownIcon, PencilIcon, PlusIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { addVisit, deleteVisit, updateVisit } from "@/app/actions";
@@ -24,9 +25,9 @@ import {
 } from "@/lib/meds/visits";
 import { cn } from "@/lib/utils";
 import { DatePicker } from "./date-picker";
-import { reportHref } from "./export-menu";
 import { FormError, SubmitButton, useActionForm } from "./forms";
 import { ConfirmDelete } from "./history";
+import { reportHref } from "./reports-board";
 
 const dayLabel = fmtDate;
 
@@ -341,7 +342,13 @@ export function VisitPlan({
         })}
 
         {upcoming.length > 0 && notTaking > 0 && (
-          <p className="text-xs text-muted-foreground">另有 {notTaking} 种未在吃的药（已停药或没设规律）不需要开药，没有列出。</p>
+          <p className="text-xs text-muted-foreground">
+            另有{" "}
+            <Link href="/?tab=inactive" className="underline underline-offset-4 hover:text-foreground">
+              {notTaking} 种未在吃的药
+            </Link>
+            （已停药或没设规律）不需要开药，没有列出。
+          </p>
         )}
 
         {upcoming.length > 0 && medications.some((m) => m.perBox) && (

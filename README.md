@@ -5,6 +5,9 @@ simulates stock day by day, slot by slot (早 / 中 / 晚) to tell you **the las
 medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
 `额外多 2 颗：够 2027.01.07 周四 早、中` when the pills left cover only part of the next day.
 
+- **Three pages** in the top navigation: **药品** (`/`, the medication cards and everything
+  recorded on them), **就诊 · 住院** (`/visits`, the visit plan and the hospital stays) and
+  **导出清单** (`/reports`, the PDF lists).
 - **Per medication**: name, brand (optional), dosage/strength, and how it is packed (盒 / 瓶 and
   pills per pack, optional). Every remaining amount is also shown in packs, e.g. `合 6 瓶 14 颗`.
 - **Supply logs**: `+N` pills on any date (whole or 0.5), counted before that day's morning dose;
@@ -35,7 +38,7 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   the PDF lists leave the medications not being taken out of what to get.
 - **Regimen timeline**: morning / noon / evening doses, each with an `effectiveFrom` date.
   A regimen never applies before its date; setting one again for the same date overwrites it.
-- **Reserve (药物储备)**: extra pills kept at home, outside the stock and the projection. The app
+- **Reserve (药物储备)** (管理储备 on each card): extra pills kept at home, outside the stock and the projection. The app
   only says how many whole days they would last on today's regimen. "从储备取用" moves pills from
   the reserve into the stock as one supply log.
 - **Visit plan (就诊计划)**: enter the next visits (下次, 下下次, …). For each one and each
@@ -51,7 +54,7 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   assumption with the real gap. If stock runs out before the first visit, it names the last
   Thursday that would still avoid the gap.
 - **PDF lists (导出 PDF)**: A4, Chinese, generated on the server for the current moment.
-  **复诊开药清单** (per visit, the next one from the toolbar): the stock left after the Wednesday
+  **复诊开药清单** (per visit: any upcoming one on 导出清单, or from its row in the visit plan): the stock left after the Wednesday
   evening before the visit, what the period to the following visit (usually 4 weeks) takes, and
   what is short as `N 盒（M 颗）`, with each medication's reason, the whole packs to get, every
   purchase (each supply log counts as one) and stock count. **药品现有清单**: current stock,

@@ -1,39 +1,36 @@
 "use client";
 
-import { ChartSplineIcon, ClipboardListIcon, PillIcon, PlusIcon, SearchIcon, SettingsIcon, TagIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, ChartSplineIcon, ClipboardListIcon, PillIcon, PlusIcon, SearchIcon, SettingsIcon, TagIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useClock, type Clock } from "@/hooks/use-clock";
 import { fmtDate } from "@/lib/meds/dates";
 import {
   describeReserve,
   describeShortfall,
   fmtQty,
   formatRegimen,
-  intakeAt,
   intakeLabel,
   isTaking,
-  medicationStatus,
   packNote,
   type Intake,
   type MedicationStatus,
 } from "@/lib/meds/format";
 import { searchMedications } from "@/lib/meds/search";
-import type { MedicationRecord, StayRecord, VisitRecord } from "@/lib/meds/types";
+import type { MedicationRecord } from "@/lib/meds/types";
 import { cn } from "@/lib/utils";
-import { scheduleVisits } from "@/lib/meds/visits";
+import { daysFromToday } from "@/lib/meds/visits";
 import { BulkImportDialog } from "./bulk-import";
 import { DetailDialog } from "./detail-dialog";
-import { ExportMenu } from "./export-menu";
 import { useHasImportDraft } from "./import-draft";
 import { AddSupplyDialog, CreateMedicationDialog, RegimenDialog, ReserveDialog } from "./medication-dialogs";
+import { PageTitle } from "./page-title";
 import { StatusBadge, toneText } from "./status-badge";
-import { HospitalStays } from "./stays";
-import { VisitPlan } from "./visit-plan";
+import { useMeds, type MedsData } from "./use-meds";
 
 type Panel = { kind: "supply" | "regimen" | "reserve" | "detail"; id: number } | null;
 
@@ -49,20 +46,10 @@ function tabHref(tab: Tab, search: string) {
   return q ? `?${q}` : "/";
 }
 
-export function Board({
-  medications,
-  visits,
-  stays,
-  serverClock,
-}: {
-  medications: MedicationRecord[];
-  visits: VisitRecord[];
-  stays: StayRecord[];
-  serverClock: Clock;
-}) {
-  const clock = useClock(serverClock);
-  const { date, slotsDone } = clock.moment;
-  const now = useMemo(() => ({ date, slotsDone }), [date, slotsDone]);
+/** 药品: every medication's card, 在吃 first, with the dialogs that record supplies, regimens and counts. */
+export function Board(data: MedsData) {
+  const { medications } = data;
+  const { clock, now, pauses, upcoming, statuses, intakes, taking, notTaking } = useMeds(data);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
@@ -74,19 +61,8 @@ export function Board({
   // The history API is wired into the router: useSearchParams follows without a server round trip.
   const showTab = (t: Tab) => window.history.pushState(null, "", tabHref(t, window.location.search));
 
-  const schedule = useMemo(() => scheduleVisits(visits, date), [visits, date]);
-  const pauses = useMemo(() => stays.map((s) => ({ start: s.startDate, end: s.endDate })), [stays]);
-  const upcoming = useMemo(() => schedule.map((s) => s.date), [schedule]);
-  const statuses = useMemo(
-    () =>
-      new Map(
-        medications.map((m) => [m.id, medicationStatus(m.supplies, m.regimens, now, schedule, { pauses, perBox: m.perBox, counts: m.counts })]),
-      ),
-    [medications, now, schedule, pauses],
-  );
-  const intakes = useMemo(() => new Map(medications.map((m) => [m.id, intakeAt(m.regimens, date)])), [medications, date]);
-  const taking = useMemo(() => medications.filter((m) => isTaking(intakes.get(m.id)!)), [medications, intakes]);
-  const notTaking = useMemo(() => medications.filter((m) => !isTaking(intakes.get(m.id)!)), [medications, intakes]);
+  const nextVisit = upcoming[0];
+  const gaps = taking.filter((m) => statuses.get(m.id)?.plan.beforeFirst).length;
   const inTab = tab === "active" ? taking : notTaking;
 
   const noPerBox = inTab.filter((m) => !m.perBox).length;
@@ -103,40 +79,50 @@ export function Board({
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3">
-        <p className="text-sm text-muted-foreground tabular-nums">
-          今天 {fmtDate(clock.date)}（北京时间）· 共 {medications.length} 种药
-        </p>
-        <div className="ml-auto flex w-full gap-2 sm:w-auto">
-          {medications.length > 0 && (
-            <div className="relative flex-1 sm:w-72 sm:flex-none">
-              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                aria-label="搜索药品"
-                placeholder="搜索药品：名称、品牌、规格或拼音"
-                className="pl-8"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </div>
-          )}
-          <Button variant="outline" onClick={() => setImporting(true)} title={hasImportDraft ? "有没提交的录入内容，打开即可继续" : undefined}>
-            <ClipboardListIcon />
-            一键录入
-            {hasImportDraft && (
-              <Badge variant="secondary" className="h-4 px-1 text-[10px]">
-                草稿
-              </Badge>
+      <PageTitle
+        title="药品"
+        description={
+          <span className="tabular-nums">
+            今天 {fmtDate(clock.date)}（北京时间）· 共 {medications.length} 种药 ·{" "}
+            <Link href="/visits" className="underline-offset-4 hover:text-foreground hover:underline">
+              {nextVisit ? `下次就诊 ${fmtDate(nextVisit)}（${daysFromToday(nextVisit, clock.date)}）` : "还没安排下次就诊"}
+            </Link>
+            {gaps > 0 && (
+              <Link href="/visits" className="ml-2 inline-flex items-center gap-1 text-amber-700 underline-offset-4 hover:underline dark:text-amber-400">
+                <TriangleAlertIcon className="size-3.5" />
+                {gaps} 种药等不到下次就诊
+              </Link>
             )}
-          </Button>
-          {medications.length > 0 && <ExportMenu nextVisit={upcoming[0] ?? null} />}
-          <Button onClick={() => setCreating(true)}>
-            <PlusIcon />
-            新增药品
-          </Button>
-        </div>
-      </div>
+          </span>
+        }
+      >
+        {medications.length > 0 && (
+          <div className="relative flex-1 sm:w-72 sm:flex-none">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              aria-label="搜索药品"
+              placeholder="搜索药品：名称、品牌、规格或拼音"
+              className="pl-8"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+        )}
+        <Button variant="outline" onClick={() => setImporting(true)} title={hasImportDraft ? "有没提交的录入内容，打开即可继续" : undefined}>
+          <ClipboardListIcon />
+          一键录入
+          {hasImportDraft && (
+            <Badge variant="secondary" className="h-4 px-1 text-[10px]">
+              草稿
+            </Badge>
+          )}
+        </Button>
+        <Button onClick={() => setCreating(true)}>
+          <PlusIcon />
+          新增药品
+        </Button>
+      </PageTitle>
 
       {medications.length > 0 && (
         <div className="-mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -252,18 +238,6 @@ export function Board({
         </div>
       )}
 
-      <div className="grid items-start gap-4 lg:grid-cols-3">
-        <VisitPlan
-          visits={visits}
-          medications={taking}
-          notTaking={notTaking.length}
-          statuses={statuses}
-          today={date}
-          className="lg:col-span-2"
-        />
-        <HospitalStays stays={stays} today={date} />
-      </div>
-
       <CreateMedicationDialog open={creating} onOpenChange={setCreating} today={clock.date} />
       <BulkImportDialog open={importing} onOpenChange={setImporting} medications={medications} statuses={statuses} now={now} />
       <AddSupplyDialog medication={open("supply")} onOpenChange={close} today={clock.date} pauses={pauses} visits={upcoming} />
@@ -357,16 +331,7 @@ function MedicationCard({
           {conclusion.detail && <p className={`text-right text-xs ${toneText[conclusion.tone]}`}>{conclusion.detail}</p>}
           {conclusion.extraNote && <p className="text-right text-xs text-muted-foreground">{conclusion.extraNote}</p>}
         </div>
-        <Row
-          label={
-            <span className="inline-flex items-center gap-1">
-              药物储备
-              <Button size="xs" variant="ghost" className="h-5 px-1.5 text-muted-foreground" onClick={onReserve}>
-                管理
-              </Button>
-            </span>
-          }
-        >
+        <Row label="药物储备">
           <span>{fmtQty(medication.reserve)} 颗</span>
           {reserveNote && <span className="text-xs text-muted-foreground">{reserveNote}</span>}
           {medication.reserve > 0 && (
@@ -399,16 +364,20 @@ function MedicationCard({
           </p>
         )}
       </CardContent>
-      <CardFooter className="mt-auto flex flex-wrap gap-2">
+      <CardFooter className="mt-auto grid grid-cols-2 gap-2">
         <Button size="sm" variant="outline" onClick={onSupply}>
           <PlusIcon />
           补药
+        </Button>
+        <Button size="sm" variant="outline" onClick={onReserve} title="加入储备、从储备取用或修正储备数">
+          <ArchiveIcon />
+          管理储备
         </Button>
         <Button size="sm" variant="outline" onClick={onRegimen}>
           <SettingsIcon />
           改规律
         </Button>
-        <Button size="sm" variant="secondary" className="ml-auto" onClick={onDetail}>
+        <Button size="sm" variant="secondary" onClick={onDetail}>
           <ChartSplineIcon />
           详情 / 曲线
         </Button>
