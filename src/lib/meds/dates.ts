@@ -34,8 +34,14 @@ export function diffDays(later: ISODate, earlier: ISODate): number {
   return toDayNum(later) - toDayNum(earlier);
 }
 
-/** The wall-clock date and minute-of-day in `timeZone` (default: the runtime's own zone). */
-export function wallClock(now: Date = new Date(), timeZone?: string): { date: ISODate; minutes: number } {
+/**
+ * The app's clock is Beijing time everywhere: "today" and which of 早/中/晚 have passed are
+ * the same for every visitor and for the server, whatever their own time zone is.
+ */
+export const APP_TIME_ZONE = "Asia/Shanghai";
+
+/** The wall-clock date and minute-of-day in `timeZone` (default: Beijing time). */
+export function wallClock(now: Date = new Date(), timeZone: string = APP_TIME_ZONE): { date: ISODate; minutes: number } {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",

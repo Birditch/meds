@@ -15,7 +15,7 @@ import type { MedicationRecord } from "@/lib/meds/types";
 import { createMedicationSchema, medicationSchema } from "@/lib/meds/validation";
 import { DatePicker } from "./date-picker";
 import { DoseFields, FormError, RegimenForm, SubmitButton, SupplyForm, parseDoses, useActionForm } from "./forms";
-import { QuantityInput, parseQuantity } from "./quantity-input";
+import { SupplyAmountInput, amountState, resolveAmount } from "./supply-amount";
 
 function MedicationFieldsInputs({
   values,
@@ -55,14 +55,14 @@ export function CreateMedicationDialog({
 }) {
   const [fields, setFields] = useState({ name: "", brand: "", dosage: "" });
   const [startDate, setStartDate] = useState(today);
-  const [quantity, setQuantity] = useState("");
+  const [amount, setAmount] = useState(() => amountState());
   const [doses, setDoses] = useState({ morning: "0", noon: "0", evening: "0" });
   const { pending, error, setError, submit } = useActionForm();
 
   const reset = () => {
     setFields({ name: "", brand: "", dosage: "" });
     setStartDate(today);
-    setQuantity("");
+    setAmount(amountState());
     setDoses({ morning: "0", noon: "0", evening: "0" });
     setError(null);
   };
@@ -84,12 +84,13 @@ export function CreateMedicationDialog({
           className="grid gap-5"
           onSubmit={(e) => {
             e.preventDefault();
-            const qty = parseQuantity(quantity);
+            const qty = resolveAmount(amount);
+            if ("error" in qty) return setError(qty.error);
             const d = parseDoses(doses);
             const hasRegimen = [d.morning, d.noon, d.evening].some((v) => v === null || v > 0);
             const input = {
               ...fields,
-              initialSupply: quantity.trim() ? { date: startDate, quantity: qty as number } : null,
+              initialSupply: qty.value !== null ? { date: startDate, quantity: qty.value } : null,
               initialRegimen: hasRegimen ? { effectiveFrom: startDate, ...(d as Record<keyof typeof d, number>) } : null,
             };
             const parsed = createMedicationSchema.safeParse(input);
@@ -110,15 +111,12 @@ export function CreateMedicationDialog({
             <p className="text-sm font-medium">
               初始药量与规律 <span className="font-normal text-muted-foreground">（选填）</span>
             </p>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid items-start gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="init-date">开药 / 生效日期</Label>
                 <DatePicker id="init-date" label="开药 / 生效日期" value={startDate} onChange={setStartDate} today={today} />
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="init-qty">初始药量（颗）</Label>
-                <QuantityInput id="init-qty" label="初始药量" value={quantity} onChange={setQuantity} step={1} />
-              </div>
+              <SupplyAmountInput id="init-qty" label="初始药量" value={amount} onChange={setAmount} />
             </div>
             <DoseFields idPrefix="init" values={doses} onChange={setDoses} />
           </div>

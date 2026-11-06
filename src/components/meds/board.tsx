@@ -33,7 +33,7 @@ export function Board({ medications, serverClock }: { medications: MedicationRec
     <>
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground tabular-nums">
-          今天 {clock.date} · 共 {medications.length} 种药
+          今天 {clock.date}（北京时间）· 共 {medications.length} 种药
         </p>
         <Button onClick={() => setCreating(true)}>
           <PlusIcon />

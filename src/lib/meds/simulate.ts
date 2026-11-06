@@ -14,7 +14,7 @@ export const SLOTS = ["morning", "noon", "evening"] as const;
 export type Slot = (typeof SLOTS)[number];
 export const SLOT_LABEL: Record<Slot, string> = { morning: "早", noon: "中", evening: "晚" };
 
-/** Minute of day after which a slot's dose counts as taken (08:00 / 12:00 / 18:00). */
+/** Minute of day (Beijing time) after which a slot's dose counts as taken: 08:00 / 12:00 / 18:00. */
 export const SLOT_TAKEN_AT: Record<Slot, number> = { morning: 8 * 60, noon: 12 * 60, evening: 18 * 60 };
 
 export interface Dose {

@@ -25,8 +25,8 @@ function subscribe(onChange: () => void) {
 }
 
 /**
- * The visitor's local date and minute, ticking. The server render uses `serverClock`
- * (server time zone); after hydration the browser's own clock takes over.
+ * Today's date and minute in Beijing time (APP_TIME_ZONE), ticking. The server render uses
+ * `serverClock`; after hydration the browser recomputes it from its own clock, in the same zone.
  */
 export function useClock(serverClock: Clock): Clock & { moment: Moment } {
   const key = useSyncExternalStore(

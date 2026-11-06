@@ -57,7 +57,7 @@ curl -s http://127.0.0.1:28100/api/health                 # {"ok":true}
    The existing `pg_hba.conf` rule `host all all 127.0.0.1/32 scram-sha-256` covers it.
 
 2. **`/opt/meds/.env`** (mode 600): `DATABASE_URL=postgres://meds:<random>@127.0.0.1:5432/meds`,
-   `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `MEDS_TIMEZONE`.
+   `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`.
 
 3. **nginx** — copy `deploy/nginx/meds.birditch.net.conf` into
    `/www/server/panel/vhost/nginx/`, then `nginx -t && /etc/init.d/nginx reload`. Written by hand

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { amountState, resolveAmount } from "./amount";
+import { wallClock } from "./dates";
 import { conclude, fmtQty, formatRegimen } from "./format";
 import {
   balanceAt,
@@ -198,5 +200,32 @@ describe("format", () => {
     expect(formatRegimen(reg("2026-11-01", 1, 0, 1))).toBe("早 1 · 中 0 · 晚 1（2颗/天）");
     expect(fmtQty(0.5)).toBe("0.5");
     expect(fmtQty(100)).toBe("100");
+  });
+});
+
+describe("Beijing clock", () => {
+  it("reads the date and minute in Asia/Shanghai whatever the runtime zone", () => {
+    // 2026-11-06 16:30 UTC is 2026-11-07 00:30 in Beijing.
+    expect(wallClock(new Date("2026-11-06T16:30:00Z"))).toEqual({ date: "2026-11-07", minutes: 30 });
+    expect(wallClock(new Date("2026-11-06T00:05:00Z"))).toEqual({ date: "2026-11-06", minutes: 8 * 60 + 5 });
+  });
+});
+
+describe("supply amount", () => {
+  const boxes = (b: string, p: string) => ({ mode: "boxes" as const, pills: "", boxes: b, perBox: p });
+  it("multiplies boxes by pills per box", () => {
+    expect(resolveAmount(boxes("3", "28"))).toEqual({ value: 84 });
+    expect(resolveAmount(boxes("2", "10.5"))).toEqual({ value: 21 });
+  });
+  it("treats an empty field as no supply and rejects half-filled or invalid boxes", () => {
+    expect(resolveAmount(amountState())).toEqual({ value: null });
+    expect(resolveAmount(boxes("", ""))).toEqual({ value: null });
+    expect(resolveAmount(boxes("2", ""))).toEqual({ error: "请填写每盒颗数" });
+    expect(resolveAmount(boxes("", "30"))).toEqual({ error: "盒数必须是正整数" });
+    expect(resolveAmount(boxes("0", "30"))).toEqual({ error: "盒数必须是正整数" });
+    expect(resolveAmount(boxes("1", "0.3"))).toEqual({ error: "每盒颗数只能是整数或 0.5 的倍数" });
+  });
+  it("passes a plain pill count through", () => {
+    expect(resolveAmount(amountState("100"))).toEqual({ value: 100 });
   });
 });

@@ -10,6 +10,7 @@ import type { ActionResult, RegimenRecord } from "@/lib/meds/types";
 import { regimenSchema, supplySchema, type RegimenFields, type SupplyFields } from "@/lib/meds/validation";
 import { DatePicker } from "./date-picker";
 import { QuantityInput, parseQuantity } from "./quantity-input";
+import { SupplyAmountInput, amountState, resolveAmount } from "./supply-amount";
 
 export function FormError({ children }: { children: ReactNode }) {
   if (!children) return null;
@@ -62,7 +63,7 @@ export function SupplyForm({
   onCancel?: () => void;
 }) {
   const [date, setDate] = useState(initial?.date ?? today);
-  const [quantity, setQuantity] = useState(initial ? String(initial.quantity) : "");
+  const [amount, setAmount] = useState(() => amountState(initial ? String(initial.quantity) : ""));
   const { pending, error, setError, submit } = useActionForm();
   const uid = useId();
 
@@ -71,20 +72,19 @@ export function SupplyForm({
       className="grid gap-4"
       onSubmit={(e) => {
         e.preventDefault();
-        const parsed = supplySchema.safeParse({ date, quantity: parseQuantity(quantity) });
+        const resolved = resolveAmount(amount);
+        if ("error" in resolved) return setError(resolved.error);
+        const parsed = supplySchema.safeParse({ date, quantity: resolved.value });
         if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "输入无效");
         submit(() => onSubmit(parsed.data), onDone);
       }}
     >
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid items-start gap-4 sm:grid-cols-2">
         <div className="grid gap-2">
           <Label htmlFor={`${uid}-date`}>开药日期</Label>
           <DatePicker id={`${uid}-date`} label="开药日期" value={date} onChange={setDate} today={today} />
         </div>
-        <div className="grid gap-2">
-          <Label htmlFor={`${uid}-qty`}>数量（颗）</Label>
-          <QuantityInput id={`${uid}-qty`} label="数量" value={quantity} onChange={setQuantity} step={1} />
-        </div>
+        <SupplyAmountInput id={`${uid}-qty`} label="数量" value={amount} onChange={setAmount} />
       </div>
       <p className="text-xs text-muted-foreground">当天添加的药量在当天早上服药前即计入余量。</p>
       <FormError>{error}</FormError>

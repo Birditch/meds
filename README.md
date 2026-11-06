@@ -6,7 +6,8 @@ each medication runs out** — e.g. `能吃到 2027-01-07 中`, or
 `能吃到 2026-11-07 晚（仅余 1/2 颗，最后完整一顿为当日中）`.
 
 - **Three fields per medication**: name, brand (optional), dosage/strength.
-- **Supply logs**: `+N` pills on any date (whole or 0.5), counted before that day's morning dose.
+- **Supply logs**: `+N` pills on any date (whole or 0.5), counted before that day's morning dose;
+  enter either a pill count or boxes × pills per box.
 - **Regimen timeline**: morning / noon / evening doses, each with an `effectiveFrom` date.
   A regimen never applies before its date; setting one again for the same date overwrites it.
 - **Stock chart**: vertical jumps on refills, slope changes on regimen changes, a "today" line,
@@ -34,7 +35,9 @@ all zeros (**stopped**, stock kept) or when stock hits 0 (**depleted**: last ful
 partial one, if any), with a 10-year safety cap. Quantities are counted in half pills
 internally, so there is no floating-point drift.
 
-"Now" is the visitor's local date; a slot counts as taken from 08:00 / 12:00 / 18:00.
+All dates and "now" are **Beijing time** (`Asia/Shanghai`, `APP_TIME_ZONE` in
+`src/lib/meds/dates.ts`) for every visitor and the server alike; a slot counts as taken from
+08:00 / 12:00 / 18:00.
 
 ## Development
 
@@ -66,7 +69,6 @@ add `-v` only if you mean to wipe it).
 | `DATABASE_URL` | PostgreSQL connection string (required) |
 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | Cloudflare Access team domain and application AUD; every request must carry a valid Access JWT |
 | `MEDS_ACCESS_DISABLED=1` | skip the Access check (local only). In production, missing Access settings fail closed with 503 |
-| `MEDS_TIMEZONE` | time zone for the server-rendered first paint and `/api/medications` |
 | `MEDS_MIGRATE_ON_START=0` | don't apply migrations at boot |
 
 `GET /api/medications` returns all data with the server-side projection

@@ -27,7 +27,7 @@ export default function Page() {
 async function MedicationBoard() {
   await connection();
   const medications = await listMedications();
-  const serverClock = wallClock(new Date(), process.env.MEDS_TIMEZONE || undefined);
+  const serverClock = wallClock();
   return <Board medications={medications} serverClock={serverClock} />;
 }
 
