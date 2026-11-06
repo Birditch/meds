@@ -30,6 +30,11 @@ for the health check and tags it `meds:current`. If the new container is not hea
 it prints the logs and restarts the previous image. Database migrations in `drizzle/` are applied
 by the app itself at boot (`src/instrumentation.ts`), so a deploy is also a migration.
 
+Keep migrations additive (new tables, nullable columns or columns with defaults) so the rollback
+to the previous image still works against the migrated database: Drizzle selects the columns it
+knows by name, and inserts from an older image fall back to the defaults. `0001_visits` and
+`0002_reserve_packs_stays` follow this rule.
+
 ## Operate
 
 ```bash

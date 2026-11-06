@@ -58,13 +58,12 @@ export function wallClock(now: Date = new Date(), timeZone: string = APP_TIME_ZO
   };
 }
 
-/** `2027-02-14` → `2027年02月14日` */
-export function formatDateCN(date: ISODate): string {
-  const [y, m, d] = date.split("-");
-  return `${y}年${m}月${d}日`;
-}
+const WEEKDAY = ["日", "一", "二", "三", "四", "五", "六"];
+/** `2026-11-06` → `周五` (1970-01-01 was a Thursday). */
+export const weekdayCN = (date: ISODate) => `周${WEEKDAY[(((toDayNum(date) + 4) % 7) + 7) % 7]}`;
 
-/** `2027-02-14` → `02-14` */
-export function formatMonthDay(date: ISODate): string {
-  return date.slice(5);
-}
+/** `2027-02-14` → `2027.02.14` (chart ticks, where there is no room for the weekday). */
+export const fmtDay = (date: ISODate): string => date.replaceAll("-", ".");
+
+/** Every date the UI shows: `2027-02-14` → `2027.02.14 周日`. */
+export const fmtDate = (date: ISODate): string => `${fmtDay(date)} ${weekdayCN(date)}`;

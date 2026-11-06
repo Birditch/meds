@@ -7,17 +7,26 @@ import { deleteMedication } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import { describeShortfall, fmtQty, formatRegimen, type MedicationStatus } from "@/lib/meds/format";
-import type { Moment } from "@/lib/meds/simulate";
+import { fmtDate, type ISODate } from "@/lib/meds/dates";
+import {
+  describeReserve,
+  describeShortfall,
+  fmtQty,
+  formatRegimen,
+  packNote,
+  type MedicationStatus,
+} from "@/lib/meds/format";
+import type { DateRange, Moment } from "@/lib/meds/simulate";
 import type { MedicationRecord } from "@/lib/meds/types";
+import { visitOrdinal } from "@/lib/meds/visits";
 import { ConfirmDelete, RegimenTimeline, SupplyHistory } from "./history";
-import { EditMedicationForm } from "./medication-dialogs";
+import { EditMedicationForm, ReservePanel } from "./medication-dialogs";
 import { StatusBadge, toneText } from "./status-badge";
 import { StockChart } from "./stock-chart";
 
 const momentLabel = ["今日服药前", "早上服药后", "中午服药后", "晚上服药后"] as const;
 
-function Stat({ label, children, sub }: { label: string; children: React.ReactNode; sub?: React.ReactNode }) {
+function Stat({ label, children, sub }: { label: React.ReactNode; children: React.ReactNode; sub?: React.ReactNode }) {
   return (
     <div className="grid content-start gap-1 rounded-lg border p-3">
       <span className="text-xs text-muted-foreground">{label}</span>
@@ -31,20 +40,26 @@ export function DetailDialog({
   medication,
   status,
   now,
+  visits,
+  stays,
   onOpenChange,
 }: {
   medication: MedicationRecord | null;
   status: MedicationStatus | null;
   now: Moment;
+  /** Upcoming visit dates. */
+  visits: readonly ISODate[];
+  stays: readonly DateRange[];
   onOpenChange: (open: boolean) => void;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [panel, setPanel] = useState<"edit" | "reserve" | null>(null);
+  const toggle = (p: "edit" | "reserve") => setPanel((v) => (v === p ? null : p));
 
   return (
     <Dialog
       open={!!medication}
       onOpenChange={(o) => {
-        if (!o) setEditing(false);
+        if (!o) setPanel(null);
         onOpenChange(o);
       }}
     >
@@ -56,16 +71,18 @@ export function DetailDialog({
                 <div className="grid gap-1">
                   <DialogTitle className="text-xl">{medication.name}</DialogTitle>
                   <DialogDescription>
-                    {[medication.brand, medication.dosage].filter(Boolean).join(" · ")}
+                    {[medication.brand, medication.dosage, medication.perBox && `${fmtQty(medication.perBox)} 颗/${medication.packUnit}`]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </DialogDescription>
                 </div>
                 <div className="ml-auto flex">
-                  <Button variant="ghost" size="icon-sm" aria-label="编辑药品信息" onClick={() => setEditing((v) => !v)}>
+                  <Button variant="ghost" size="icon-sm" aria-label="编辑药品信息" onClick={() => toggle("edit")}>
                     <PencilIcon />
                   </Button>
                   <ConfirmDelete
                     title={`删除「${medication.name}」？`}
-                    description="药品及其全部补药记录、服用规律都会被删除，无法恢复。"
+                    description="药品及其全部补药记录、服用规律、储备都会被删除，无法恢复。"
                     label="删除药品"
                     onConfirm={async () => {
                       const r = await deleteMedication(medication.id);
@@ -80,21 +97,42 @@ export function DetailDialog({
               </div>
             </DialogHeader>
 
-            {editing && (
+            {panel === "edit" && (
               <div className="rounded-lg border bg-muted/30 p-3">
-                <EditMedicationForm key={medication.id} medication={medication} onDone={() => setEditing(false)} />
+                <EditMedicationForm key={medication.id} medication={medication} onDone={() => setPanel(null)} />
               </div>
             )}
 
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Stat label="当前剩余" sub={`${now.date} · ${momentLabel[now.slotsDone]}`}>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <Stat
+                label="当前剩余"
+                sub={
+                  <>
+                    {packNote(status.balanceNow, medication) && <div>{packNote(status.balanceNow, medication)}</div>}
+                    {fmtDate(now.date)} · {momentLabel[now.slotsDone]}
+                  </>
+                }
+              >
                 {fmtQty(status.balanceNow)} 颗
               </Stat>
-              <Stat label="当前规律" sub={status.current ? `${status.current.effectiveFrom} 起生效` : undefined}>
+              <Stat label="当前规律" sub={status.current ? `${fmtDate(status.current.effectiveFrom)} 起生效` : undefined}>
                 <span className="text-sm">{formatRegimen(status.current)}</span>
               </Stat>
+              <div className="grid content-start gap-1 rounded-lg border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">药物储备（不计入余量）</span>
+                  <Button size="xs" variant={panel === "reserve" ? "secondary" : "ghost"} onClick={() => toggle("reserve")}>
+                    管理
+                  </Button>
+                </div>
+                <div className="text-base font-semibold tabular-nums">{fmtQty(medication.reserve)} 颗</div>
+                <div className="text-xs text-muted-foreground">
+                  {packNote(medication.reserve, medication) && <div>{packNote(medication.reserve, medication)}</div>}
+                  {describeReserve(medication.reserve, status.current)}
+                </div>
+              </div>
               <div className="grid content-start gap-1 rounded-lg border p-3 sm:col-span-2">
-                <span className="text-xs text-muted-foreground">最终预计耗尽</span>
+                <span className="text-xs text-muted-foreground">能吃到（最后一个早中晚都吃满的日子）</span>
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusBadge conclusion={status.conclusion} />
                   {status.conclusion.detail && (
@@ -102,8 +140,17 @@ export function DetailDialog({
                   )}
                 </div>
                 <div className="text-sm font-medium">{status.conclusion.headline}</div>
+                {status.conclusion.extraNote && (
+                  <div className="text-xs text-muted-foreground">{status.conclusion.extraNote}</div>
+                )}
               </div>
             </div>
+
+            {panel === "reserve" && (
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <ReservePanel key={medication.id} medication={medication} today={now.date} onDone={() => setPanel(null)} />
+              </div>
+            )}
 
             {status.shortfall && (
               <p className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
@@ -112,8 +159,43 @@ export function DetailDialog({
               </p>
             )}
 
+            {status.plan.visits.length > 0 && (
+              <div className="grid gap-1.5 rounded-lg border p-3 text-sm">
+                <span className="text-xs text-muted-foreground">就诊开药（不动用储备）</span>
+                {status.plan.beforeFirst && (
+                  <p className="text-amber-800 dark:text-amber-300">
+                    等不到下次就诊：{fmtDate(status.plan.beforeFirst.from.date)} 起断药，就诊前还缺{" "}
+                    {fmtQty(status.plan.beforeFirst.shortfall)} 颗。
+                  </p>
+                )}
+                <ul className="grid gap-1">
+                  {status.plan.visits.map((v, i) => (
+                    <li key={v.date} className="flex flex-wrap items-baseline gap-x-2 tabular-nums">
+                      <span className="w-12 text-muted-foreground">{visitOrdinal(i)}</span>
+                      <span>{fmtDate(v.date)}</span>
+                      <span className="text-muted-foreground">
+                        到诊剩 {fmtQty(v.stockBefore)} 颗
+                        {packNote(v.stockBefore, medication) && `（${packNote(v.stockBefore, medication)}）`}
+                      </span>
+                      <span className="ml-auto">
+                        {v.need === 0 ? (
+                          <span className="text-muted-foreground">无需开药</span>
+                        ) : (
+                          <>
+                            需开 <b>{v.packs !== null ? `${v.packs} ${medication.packUnit}` : `${fmtQty(v.need)} 颗`}</b>
+                            {v.packs !== null && <span className="text-muted-foreground">（缺 {fmtQty(v.need)} 颗）</span>}
+                          </>
+                        )}
+                        <span className="text-muted-foreground"> · 吃到 {fmtDate(v.coverUntil)}{v.estimated ? "（估算）" : ""}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {status.sim.days.length > 0 ? (
-              <StockChart sim={status.sim} now={now} balanceNow={status.balanceNow} />
+              <StockChart sim={status.sim} now={now} balanceNow={status.balanceNow} visits={visits} stays={stays} />
             ) : (
               <p className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground">
                 添加补药记录和服用规律后，这里会画出余量曲线

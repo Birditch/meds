@@ -32,6 +32,12 @@ export interface RegimenInput extends Dose {
   effectiveFrom: ISODate;
 }
 
+/** A span of days, both ends included. */
+export interface DateRange {
+  start: ISODate;
+  end: ISODate;
+}
+
 export type SlotStatus =
   | "none" // nothing scheduled for this slot
   | "full" // the whole dose was taken
@@ -58,6 +64,8 @@ export interface DaySnapshot {
   regimen: Dose | null;
   /** A regimen takes effect on this very day. */
   regimenChanged: boolean;
+  /** In hospital: nothing is taken from home stock today. */
+  paused: boolean;
   slots: [SlotOutcome, SlotOutcome, SlotOutcome];
   taken: number;
   endOfDayBalance: number;
@@ -95,8 +103,12 @@ export interface Simulation {
 export interface SimulateOptions {
   /** Keep simulating at least through this date, so "today" is always on the timeline. */
   today?: ISODate;
-  /** Safety horizon past max(last record, today). Default 10 years. */
+  /** Also keep simulating through this date (e.g. the end of the visit plan), out of stock or not. */
+  until?: ISODate;
+  /** Safety horizon past max(last record, today, until). Default 10 years. */
   maxYears?: number;
+  /** Hospital stays: every dose on these days is skipped. */
+  pauses?: readonly DateRange[];
 }
 
 const toHalves = (n: number) => Math.round(n * 2);
@@ -133,8 +145,13 @@ export function simulate(
   const recordDays = [...suppliedOn.keys(), ...regimenOn.keys()];
   const start = Math.min(...recordDays);
   const lastRecord = Math.max(...recordDays);
-  const horizon = options.today ? Math.max(lastRecord, toDayNum(options.today)) : lastRecord;
+  const horizon = Math.max(
+    lastRecord,
+    options.today ? toDayNum(options.today) : -Infinity,
+    options.until ? toDayNum(options.until) : -Infinity,
+  );
   const cap = horizon + Math.round((options.maxYears ?? 10) * 365.25);
+  const pauses = (options.pauses ?? []).map((p) => [toDayNum(p.start), toDayNum(p.end)] as const);
 
   const days: DaySnapshot[] = [];
   let balance = 0;
@@ -154,13 +171,14 @@ export function simulate(
     // Step B: latest regimen with effectiveFrom <= today.
     while (regimenIdx + 1 < timeline.length && timeline[regimenIdx + 1].day <= day) regimenIdx++;
     const regimen = regimenIdx >= 0 ? timeline[regimenIdx] : null;
+    const paused = pauses.some(([from, to]) => day >= from && day <= to);
 
-    // Step C: morning -> noon -> evening.
+    // Step C: morning -> noon -> evening (nothing while in hospital).
     let takenToday = 0;
     const slots: SlotOutcome[] = [];
     for (let i = 0; i < SLOTS.length; i++) {
       const slot = SLOTS[i];
-      const dose = regimen ? regimen.doses[i] : 0;
+      const dose = regimen && !paused ? regimen.doses[i] : 0;
       if (dose <= 0) {
         // Nothing scheduled: skip the slot.
         slots.push({ slot, required: 0, taken: 0, after: fromHalves(balance), status: "none" });
@@ -193,6 +211,7 @@ export function simulate(
         ? { morning: fromHalves(regimen.doses[0]), noon: fromHalves(regimen.doses[1]), evening: fromHalves(regimen.doses[2]) }
         : null,
       regimenChanged: regimen?.day === day,
+      paused,
       slots: slots as DaySnapshot["slots"],
       taken: fromHalves(takenToday),
       endOfDayBalance: fromHalves(balance),
@@ -326,4 +345,26 @@ export function isExhaustedAt(sim: Simulation, m: Moment): boolean {
   if (sim.outcome.kind !== "depleted") return false;
   if (!final) return true; // never had stock to take
   return slotPos(toDayNum(final.date), SLOTS.indexOf(final.slot)) <= lastDonePos(m);
+}
+
+export interface FullDays {
+  /** Last day whose scheduled doses were all taken in full; null when not even the first day is. */
+  lastFullDay: ISODate | null;
+  /** The day after it, which only gets part of its doses; null when the stock ends on a day boundary. */
+  shortDay: DaySnapshot | null;
+}
+
+/**
+ * Whole days a depleted timeline lasts: a day that gets only some of its doses does not
+ * count (pills for 早 but not 晚 on day x → the stock lasts through x − 1).
+ */
+export function fullDays(sim: Simulation): FullDays | null {
+  const final = finalDose(sim.outcome);
+  if (!final || sim.days.length === 0) return null;
+  const idx = toDayNum(final.date) - sim.days[0].day;
+  const snap = sim.days[idx];
+  if (snap.slots.every((s) => s.status === "none" || s.status === "full")) {
+    return { lastFullDay: final.date, shortDay: null };
+  }
+  return { lastFullDay: idx > 0 ? sim.days[idx - 1].date : null, shortDay: snap };
 }

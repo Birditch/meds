@@ -6,7 +6,7 @@ import { zhCN } from "react-day-picker/locale";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import type { ISODate } from "@/lib/meds/dates";
+import { fmtDate, type ISODate } from "@/lib/meds/dates";
 
 const toLocalDate = (iso: ISODate) => {
   const [y, m, d] = iso.split("-").map(Number);
@@ -34,9 +34,9 @@ export function DatePicker({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button id={id} aria-label={`${label}：${value}`} type="button" variant="outline" className="w-full justify-start font-normal tabular-nums">
+        <Button id={id} aria-label={`${label}：${fmtDate(value)}`} type="button" variant="outline" className="w-full justify-start font-normal tabular-nums">
           <CalendarIcon className="text-muted-foreground" />
-          {value}
+          {fmtDate(value)}
           {value === today && <span className="text-muted-foreground">（今天）</span>}
         </Button>
       </PopoverTrigger>

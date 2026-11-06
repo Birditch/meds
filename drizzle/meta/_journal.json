@@ -8,6 +8,20 @@
       "when": 1793972000564,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793977262809,
+      "tag": "0001_visits",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793978442499,
+      "tag": "0002_reserve_packs_stays",
+      "breakpoints": true
     }
   ]
 }

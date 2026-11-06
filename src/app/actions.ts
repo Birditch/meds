@@ -1,22 +1,29 @@
 "use server";
 
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, gte, ne, sql } from "drizzle-orm";
 import { refresh } from "next/cache";
 import { headers } from "next/headers";
 import type { z } from "zod";
 import { getDb } from "@/db";
-import { dosageRegimens, medications, supplyLogs } from "@/db/schema";
+import { dosageRegimens, hospitalStays, medications, supplyLogs, visits } from "@/db/schema";
 import { checkAccess } from "@/lib/access";
+import { fmtDate } from "@/lib/meds/dates";
 import type { ActionResult } from "@/lib/meds/types";
 import {
   createMedicationSchema,
+  dateSchema,
+  drawSchema,
   idSchema,
   medicationSchema,
   regimenSchema,
+  reserveSchema,
+  staySchema,
   supplySchema,
   type CreateMedicationFields,
+  type DrawFields,
   type MedicationFields,
   type RegimenFields,
+  type StayFields,
   type SupplyFields,
 } from "@/lib/meds/validation";
 
@@ -70,6 +77,40 @@ export async function updateMedication(id: number, input: MedicationFields): Pro
     const fields = parse(medicationSchema, input);
     const rows = await getDb().update(medications).set(fields).where(eq(medications.id, medId)).returning({ id: medications.id });
     if (rows.length === 0) throw new UserError("药品不存在或已被删除");
+  });
+}
+
+/** Sets how many extra pills are kept at home; they never enter the stock simulation. */
+export async function setReserve(id: number, reserve: number): Promise<ActionResult> {
+  return run(async () => {
+    const medId = parse(idSchema, id);
+    const value = parse(reserveSchema, reserve);
+    const rows = await getDb()
+      .update(medications)
+      .set({ reserve: value })
+      .where(eq(medications.id, medId))
+      .returning({ id: medications.id });
+    if (rows.length === 0) throw new UserError("药品不存在或已被删除");
+  });
+}
+
+/** Takes pills out of the reserve into the current stock: one supply log, reserve reduced. */
+export async function drawFromReserve(id: number, input: DrawFields): Promise<ActionResult> {
+  return run(async () => {
+    const medId = parse(idSchema, id);
+    const { date, quantity } = parse(drawSchema, input);
+    await getDb().transaction(async (tx) => {
+      const rows = await tx
+        .update(medications)
+        .set({ reserve: sql`${medications.reserve} - ${quantity}` })
+        .where(and(eq(medications.id, medId), gte(medications.reserve, quantity)))
+        .returning({ id: medications.id });
+      if (rows.length === 0) {
+        const [med] = await tx.select({ reserve: medications.reserve }).from(medications).where(eq(medications.id, medId));
+        throw new UserError(med ? `储备只剩 ${med.reserve} 颗，不够取` : "药品不存在或已被删除");
+      }
+      await tx.insert(supplyLogs).values({ medicationId: medId, date, quantity });
+    });
   });
 }
 
@@ -152,5 +193,61 @@ export async function updateRegimen(id: number, input: RegimenFields): Promise<A
 export async function deleteRegimen(id: number): Promise<ActionResult> {
   return run(async () => {
     await getDb().delete(dosageRegimens).where(eq(dosageRegimens.id, parse(idSchema, id)));
+  });
+}
+
+/* ------------------------------------ visits ------------------------------------- */
+
+const isUniqueViolation = (err: unknown) =>
+  typeof err === "object" && err !== null && "code" in err && (err as { code?: string }).code === "23505";
+
+export async function addVisit(date: string): Promise<ActionResult> {
+  return run(async () => {
+    const day = parse(dateSchema, date);
+    const rows = await getDb().insert(visits).values({ date: day }).onConflictDoNothing().returning({ id: visits.id });
+    if (rows.length === 0) throw new UserError(`${fmtDate(day)} 已经有就诊安排`);
+  });
+}
+
+export async function updateVisit(id: number, date: string): Promise<ActionResult> {
+  return run(async () => {
+    const visitId = parse(idSchema, id);
+    const day = parse(dateSchema, date);
+    try {
+      const rows = await getDb().update(visits).set({ date: day }).where(eq(visits.id, visitId)).returning({ id: visits.id });
+      if (rows.length === 0) throw new UserError("就诊记录不存在或已被删除");
+    } catch (err) {
+      if (isUniqueViolation(err)) throw new UserError(`${fmtDate(day)} 已经有就诊安排`);
+      throw err;
+    }
+  });
+}
+
+export async function deleteVisit(id: number): Promise<ActionResult> {
+  return run(async () => {
+    await getDb().delete(visits).where(eq(visits.id, parse(idSchema, id)));
+  });
+}
+
+/* -------------------------------- hospital stays --------------------------------- */
+
+export async function addStay(input: StayFields): Promise<ActionResult> {
+  return run(async () => {
+    await getDb().insert(hospitalStays).values(parse(staySchema, input));
+  });
+}
+
+export async function updateStay(id: number, input: StayFields): Promise<ActionResult> {
+  return run(async () => {
+    const stayId = parse(idSchema, id);
+    const fields = parse(staySchema, input);
+    const rows = await getDb().update(hospitalStays).set(fields).where(eq(hospitalStays.id, stayId)).returning({ id: hospitalStays.id });
+    if (rows.length === 0) throw new UserError("住院记录不存在或已被删除");
+  });
+}
+
+export async function deleteStay(id: number): Promise<ActionResult> {
+  return run(async () => {
+    await getDb().delete(hospitalStays).where(eq(hospitalStays.id, parse(idSchema, id)));
   });
 }

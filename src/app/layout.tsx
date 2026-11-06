@@ -22,6 +22,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           {children}
+          <footer className="mt-auto border-t py-6 text-center text-xs text-muted-foreground">
+            © 2026 Birditch · 以{" "}
+            <a className="underline-offset-4 hover:underline" href="https://github.com/Birditch/meds/blob/main/LICENSE">
+              MIT 许可证
+            </a>{" "}
+            开源 ·{" "}
+            <a className="underline-offset-4 hover:underline" href="https://github.com/Birditch/meds">
+              GitHub
+            </a>
+          </footer>
           <Toaster position="top-center" richColors />
         </ThemeProvider>
       </body>

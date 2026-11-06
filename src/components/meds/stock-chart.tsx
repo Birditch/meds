@@ -1,15 +1,16 @@
 "use client";
 
 import { useMemo } from "react";
-import { Area, AreaChart, CartesianGrid, ReferenceDot, ReferenceLine, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, ReferenceArea, ReferenceDot, ReferenceLine, XAxis, YAxis } from "recharts";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
-import { fromDayNum, toDayNum } from "@/lib/meds/dates";
+import { fmtDate, fmtDay, fromDayNum, toDayNum, type ISODate } from "@/lib/meds/dates";
 import { fmtQty, formatRegimenShort } from "@/lib/meds/format";
 import {
   SLOTS,
   SLOT_LABEL,
   SLOT_TAKEN_AT,
   finalDose,
+  type DateRange,
   type DaySnapshot,
   type Moment,
   type Simulation,
@@ -52,8 +53,9 @@ const chartConfig = {
   history: { label: "实际余量", theme: { light: "#2a78d6", dark: "#3987e5" } },
   projection: { label: "按规律推演", theme: { light: "#2a78d6", dark: "#3987e5" } },
   supply: { label: "补药", theme: { light: "#1baf7a", dark: "#199e70" } },
-  regimen: { label: "规律变更", theme: { light: "#eb6834", dark: "#d95926" } },
-  end: { label: "耗尽", theme: { light: "#d03b3b", dark: "#d03b3b" } },
+  regimen: { label: "规律变更", theme: { light: "#d97706", dark: "#c98112" } },
+  end: { label: "耗尽", theme: { light: "#b3262e", dark: "#c9343c" } },
+  visit: { label: "就诊", theme: { light: "#a8329a", dark: "#c24fb5" } },
 } satisfies ChartConfig;
 
 function buildPoints(sim: Simulation, split: number, slotMode: boolean, balanceNow: number): Point[] {
@@ -156,7 +158,7 @@ function DayTooltip({ day }: { day: DaySnapshot }) {
   const required = day.slots.reduce((a, s) => a + s.required, 0);
   return (
     <div className="grid min-w-52 gap-1.5 rounded-lg border bg-background px-3 py-2 text-xs shadow-lg">
-      <div className="font-medium tabular-nums">{day.date}</div>
+      <div className="font-medium tabular-nums">{fmtDate(day.date)}</div>
       <div className="text-muted-foreground">
         {day.regimen ? (
           <>
@@ -167,8 +169,9 @@ function DayTooltip({ day }: { day: DaySnapshot }) {
           "当日尚无生效规律"
         )}
       </div>
-      {(day.supplied > 0 || day.regimenChanged) && (
+      {(day.supplied > 0 || day.regimenChanged || day.paused) && (
         <div className="grid gap-0.5">
+          {day.paused && <div>住院中：不消耗家里的药</div>}
           {day.supplied > 0 && <div>➕ 补药 +{fmtQty(day.supplied)} 颗</div>}
           {day.regimenChanged && day.regimen && <div>⚙️ 规律变更为 {formatRegimenShort(day.regimen)}</div>}
         </div>
@@ -216,11 +219,17 @@ export function StockChart({
   sim,
   now,
   balanceNow,
+  visits = [],
+  stays = [],
   className,
 }: {
   sim: Simulation;
   now: Moment;
   balanceNow: number;
+  /** Upcoming visit dates, drawn as vertical lines. */
+  visits?: readonly ISODate[];
+  /** Hospital stays, shaded. */
+  stays?: readonly DateRange[];
   className?: string;
 }) {
   const slotMode = sim.days.length <= SLOT_MODE_MAX_DAYS;
@@ -232,10 +241,17 @@ export function StockChart({
     const last = finalDose(sim.outcome);
     let endX: number | null = null;
     if (sim.outcome.kind === "depleted") {
-      endX = slotMode && last ? toDayNum(last.date) + SLOT_TAKEN_AT[last.slot] / 1440 : points[points.length - 1].x;
+      // The timeline may run on past the run-out (to cover planned visits), so place the dot at
+      // the final dose: its slot time, or the end of that day when doses are drawn per day.
+      if (!last) endX = points[0].x;
+      else endX = toDayNum(last.date) + (slotMode ? SLOT_TAKEN_AT[last.slot] / 1440 : 1);
     }
     return { points, ticks: buildTicks(minX, maxX), domain: [minX, maxX] as [number, number], endX };
   }, [sim, split, slotMode, balanceNow]);
+  const visitXs = visits.map(toDayNum).filter((x) => x >= domain[0] && x <= domain[1]);
+  const stayXs = stays
+    .map((s) => [Math.max(toDayNum(s.start), domain[0]), Math.min(toDayNum(s.end) + 1, domain[1])] as const)
+    .filter(([a, b]) => a < b);
 
   return (
     <div className={className}>
@@ -249,17 +265,29 @@ export function StockChart({
             </linearGradient>
           </defs>
           <CartesianGrid vertical={false} strokeDasharray="3 3" />
+          {stayXs.map(([x1, x2]) => (
+            <ReferenceArea
+              key={`stay-${x1}`}
+              x1={x1}
+              x2={x2}
+              fill="var(--muted-foreground)"
+              fillOpacity={0.12}
+              strokeOpacity={0}
+              ifOverflow="hidden"
+              label={{ value: "住院", position: "insideTop", fontSize: 11, fill: "var(--muted-foreground)" }}
+            />
+          ))}
           <XAxis
             dataKey="x"
             interval="preserveStartEnd"
             type="number"
             domain={domain}
             ticks={ticks}
-            tickFormatter={(x: number) => fromDayNum(x)}
+            tickFormatter={(x: number) => fmtDay(fromDayNum(x))}
             tickLine={false}
             axisLine={false}
             tickMargin={8}
-            minTickGap={28}
+            minTickGap={24}
             fontSize={11}
           />
           <YAxis
@@ -309,46 +337,56 @@ export function StockChart({
             strokeDasharray="4 4"
             label={{ value: slotMode ? "现在" : "今天", position: "top", fontSize: 11, fill: "var(--muted-foreground)" }}
           />
+          {visitXs.map((x) => (
+            <ReferenceLine
+              key={`visit-${x}`}
+              x={x}
+              stroke="var(--color-visit)"
+              strokeWidth={1.5}
+              strokeDasharray="2 3"
+              label={{ value: "就诊", position: "insideTopRight", fontSize: 11, fill: "var(--color-visit)" }}
+            />
+          ))}
           {endX !== null && (
             <ReferenceDot x={endX} y={0} r={5} fill="var(--color-end)" stroke="var(--background)" strokeWidth={2} />
           )}
         </AreaChart>
       </ChartContainer>
-      <ChartLegend nowLabel={slotMode ? "现在" : "今天"} />
+      <ChartLegend nowLabel={slotMode ? "现在" : "今天"} visits={visitXs.length > 0} stays={stayXs.length > 0} />
     </div>
   );
 }
 
-function ChartLegend({ nowLabel }: { nowLabel: string }) {
+function ChartLegend({ nowLabel, visits, stays }: { nowLabel: string; visits: boolean; stays: boolean }) {
   return (
     <div className="mt-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
       <span className="flex items-center gap-1.5">
         <svg width="18" height="8" aria-hidden>
-          <line x1="0" y1="4" x2="18" y2="4" stroke="#2a78d6" strokeWidth="2" />
+          <line x1="0" y1="4" x2="18" y2="4" className="stroke-[#2a78d6] dark:stroke-[#3987e5]" strokeWidth="2" />
         </svg>
         实际余量
       </span>
       <span className="flex items-center gap-1.5">
         <svg width="18" height="8" aria-hidden>
-          <line x1="0" y1="4" x2="18" y2="4" stroke="#2a78d6" strokeWidth="2" strokeDasharray="5 3" />
+          <line x1="0" y1="4" x2="18" y2="4" className="stroke-[#2a78d6] dark:stroke-[#3987e5]" strokeWidth="2" strokeDasharray="5 3" />
         </svg>
         按规律推演
       </span>
       <span className="flex items-center gap-1.5">
         <svg width="10" height="10" aria-hidden>
-          <circle cx="5" cy="5" r="4.5" fill="#1baf7a" />
+          <circle cx="5" cy="5" r="4.5" className="fill-[#1baf7a] dark:fill-[#199e70]" />
         </svg>
         补药
       </span>
       <span className="flex items-center gap-1.5">
         <svg width="10" height="10" aria-hidden>
-          <rect x="1.5" y="1.5" width="7" height="7" transform="rotate(45 5 5)" fill="#eb6834" />
+          <rect x="1.5" y="1.5" width="7" height="7" transform="rotate(45 5 5)" className="fill-[#d97706] dark:fill-[#c98112]" />
         </svg>
         规律变更
       </span>
       <span className="flex items-center gap-1.5">
         <svg width="10" height="10" aria-hidden>
-          <circle cx="5" cy="5" r="4.5" fill="#d03b3b" />
+          <circle cx="5" cy="5" r="4.5" className="fill-[#b3262e] dark:fill-[#c9343c]" />
         </svg>
         耗尽
       </span>
@@ -358,6 +396,20 @@ function ChartLegend({ nowLabel }: { nowLabel: string }) {
         </svg>
         {nowLabel}
       </span>
+      {visits && (
+        <span className="flex items-center gap-1.5">
+          <svg width="2" height="12" aria-hidden>
+            <line x1="1" y1="0" x2="1" y2="12" className="stroke-[#a8329a] dark:stroke-[#c24fb5]" strokeWidth="1.5" strokeDasharray="2 2" />
+          </svg>
+          就诊
+        </span>
+      )}
+      {stays && (
+        <span className="flex items-center gap-1.5">
+          <span className="size-3 rounded-sm bg-muted-foreground/20" aria-hidden />
+          住院（不消耗）
+        </span>
+      )}
     </div>
   );
 }

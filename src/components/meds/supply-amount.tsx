@@ -7,7 +7,7 @@ import { resolveAmount, type AmountState } from "@/lib/meds/amount";
 import { cn } from "@/lib/utils";
 import { QuantityInput } from "./quantity-input";
 
-export { amountState, resolveAmount, type AmountState } from "@/lib/meds/amount";
+export { amountInPacks, amountState, resolveAmount, type AmountState } from "@/lib/meds/amount";
 
 const digits = (v: string) => v.replace(/[^\d.]/g, "");
 
@@ -16,13 +16,16 @@ export function SupplyAmountInput({
   label,
   value,
   onChange,
+  unit = "盒",
 }: {
   id: string;
   label: string;
   value: AmountState;
   onChange: (value: AmountState) => void;
+  /** The medication's pack: 盒 or 瓶. */
+  unit?: string;
 }) {
-  const resolved = resolveAmount(value);
+  const resolved = resolveAmount(value, unit);
   const total = "value" in resolved ? resolved.value : null;
 
   const switchTo = (mode: AmountState["mode"]) => {
@@ -40,7 +43,7 @@ export function SupplyAmountInput({
           {(
             [
               ["pills", "按颗"],
-              ["boxes", "按盒"],
+              ["boxes", `按${unit}`],
             ] as const
           ).map(([mode, text]) => (
             <button
@@ -66,29 +69,45 @@ export function SupplyAmountInput({
         <div className="flex items-center gap-1.5 text-sm">
           <Input
             id={`${id}-boxes`}
-            aria-label="盒数"
+            aria-label={`${unit}数`}
             inputMode="numeric"
-            placeholder="盒数"
+            placeholder={`${unit}数`}
             className="text-center tabular-nums"
             value={value.boxes}
             onChange={(e) => onChange({ ...value, boxes: e.target.value.replace(/\D/g, "") })}
           />
-          <span className="shrink-0 text-muted-foreground">盒 ×</span>
+          <span className="shrink-0 text-muted-foreground">{unit} ×</span>
           <Input
             id={`${id}-per-box`}
-            aria-label="每盒颗数"
+            aria-label={`每${unit}颗数`}
             inputMode="decimal"
-            placeholder="每盒"
+            placeholder={`每${unit}`}
             className="text-center tabular-nums"
             value={value.perBox}
             onChange={(e) => onChange({ ...value, perBox: digits(e.target.value) })}
           />
-          <span className="shrink-0 text-muted-foreground">颗/盒</span>
+          <span className="shrink-0 text-muted-foreground">颗/{unit}</span>
+        </div>
+      )}
+      {value.mode === "boxes" && (
+        <div className="flex items-center gap-1.5 text-sm">
+          <span className="shrink-0 text-muted-foreground">另有散装</span>
+          <Input
+            id={`${id}-loose`}
+            aria-label={`散装颗数（已拆开的那${unit}剩下的）`}
+            inputMode="decimal"
+            placeholder="0"
+            className="w-20 text-center tabular-nums"
+            value={value.loose}
+            onChange={(e) => onChange({ ...value, loose: digits(e.target.value) })}
+          />
+          <span className="text-muted-foreground">颗</span>
+          <span className="text-xs text-muted-foreground">（已拆开、用过一部分的那{unit}剩下的）</span>
         </div>
       )}
       {value.mode === "boxes" && (
         <p className="text-xs text-muted-foreground tabular-nums" aria-live="polite">
-          {total !== null ? `共 ${fmtQty(total)} 颗` : "填写盒数和每盒颗数"}
+          {total !== null ? `共 ${fmtQty(total)} 颗` : `填写${unit}数和每${unit}颗数`}
         </p>
       )}
     </div>

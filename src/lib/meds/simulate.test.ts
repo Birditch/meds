@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { amountState, resolveAmount } from "./amount";
+import { amountInPacks, amountState, resolveAmount } from "./amount";
 import { wallClock } from "./dates";
-import { conclude, fmtQty, formatRegimen } from "./format";
+import { conclude, describeReserve, describeShortfall, fmtPacks, fmtQty, formatRegimen, packNote, reserveEstimate } from "./format";
 import {
   balanceAt,
   dosesLeft,
   isExhaustedAt,
   momentAt,
+  fullDays,
   nextShortfall,
   regimenAt,
   simulate,
@@ -53,7 +54,13 @@ describe("simulate", () => {
       partial: null,
     });
     expect(sim.days.at(-1)!.date).toBe("2027-01-07");
-    expect(conclude(sim, momentAt("2026-11-06", 0)).headline).toBe("能吃到：2027年01月07日 · 中");
+    // 01-07 only gets 早 and 中, so the stock lasts whole days through 01-06; the 2 pills are extra.
+    expect(conclude(sim, momentAt("2026-11-06", 0))).toMatchObject({
+      badge: "2027.01.06 周三",
+      headline: "能吃到：2027.01.06 周三",
+      detail: "距今 61 天",
+      extraNote: "额外多 2 颗：够 2027.01.07 周四 早、中",
+    });
   });
 
   it("records a partial last dose and the last full one before it", () => {
@@ -65,17 +72,37 @@ describe("simulate", () => {
       partial: { date: "2026-11-07", slot: "evening", partialRemaining: 1, required: 2 },
     });
     expect(day(sim, "2026-11-07").slots[2]).toEqual({ slot: "evening", required: 2, taken: 1, after: 0, status: "partial" });
-    expect(conclude(sim, momentAt("2026-11-06", 0)).headline).toBe(
-      "能吃到 2026-11-07 晚（仅余 1/2 颗，最后完整一顿为当日中）",
-    );
+    expect(conclude(sim, momentAt("2026-11-06", 0))).toMatchObject({
+      headline: "能吃到：2026.11.06 周五",
+      extraNote: "额外多 3 颗：够 2026.11.07 周六 早、中，晚只够 1/2 颗",
+    });
   });
 
-  it("names the day of the last full dose when it is not the partial day", () => {
+  it("counts a day only when all of its doses are covered", () => {
     // 晚 2 only, 3 pills: day 1 晚 full (1 left), day 2 晚 partial 1/2.
     const sim = simulate([sup("2026-11-06", 3)], [reg("2026-11-06", 0, 0, 2)]);
-    expect(conclude(sim, momentAt("2026-11-06", 0)).headline).toBe(
-      "能吃到 2026-11-07 晚（仅余 1/2 颗，最后完整一顿为 2026-11-06 晚）",
-    );
+    expect(fullDays(sim)).toMatchObject({ lastFullDay: "2026-11-06", shortDay: { date: "2026-11-07" } });
+    expect(conclude(sim, momentAt("2026-11-06", 0))).toMatchObject({
+      headline: "能吃到：2026.11.06 周五",
+      extraNote: "额外多 1 颗：2026.11.07 周六 晚只够 1/2 颗",
+    });
+    // Ending exactly on a day boundary leaves nothing extra.
+    const even = simulate([sup("2026-11-06", 4)], [reg("2026-11-06", 1, 0, 1)]);
+    expect(fullDays(even)).toEqual({ lastFullDay: "2026-11-07", shortDay: null });
+    expect(conclude(even, momentAt("2026-11-06", 0))).not.toHaveProperty("extraNote");
+  });
+
+  it("says so when today itself cannot be taken in full", () => {
+    // 1 pill, 早1 晚1: today 早 is covered, 晚 is not.
+    const sim = simulate([sup("2026-11-06", 1)], [reg("2026-11-06", 1, 0, 1)]);
+    expect(fullDays(sim)).toMatchObject({ lastFullDay: null, shortDay: { date: "2026-11-06" } });
+    expect(conclude(sim, momentAt("2026-11-06", 0))).toMatchObject({
+      badge: "不足一天",
+      tone: "danger",
+      headline: "今天的药已不够吃全",
+      extraNote: "额外多 1 颗：够 2026.11.06 周五 早",
+    });
+    expect(conclude(sim, momentAt("2026-11-06", 20 * 60))).toMatchObject({ badge: "已吃完", detail: "今天已吃完" });
   });
 
   it("keeps the balance at 0 through a historical gap and resumes on resupply", () => {
@@ -103,7 +130,7 @@ describe("simulate", () => {
     expect(sim.days.at(-1)!.date).toBe("2026-11-06");
     expect(conclude(sim, momentAt("2026-11-06", 600)).headline).toBe("已停药（当前剩余 20 颗）");
     // Seen before the stop date, it is announced rather than reported as done.
-    expect(conclude(sim, momentAt("2026-11-03", 600)).headline).toBe("2026-11-06 起停药（届时剩余 20 颗）");
+    expect(conclude(sim, momentAt("2026-11-03", 600)).headline).toBe("2026.11.06 周五 起停药（届时剩余 20 颗）");
   });
 
   it("reports supplies without any regimen as not-yet-scheduled", () => {
@@ -171,12 +198,15 @@ describe("reading the simulation at a moment", () => {
     expect(dosesLeft(sim, { date: "2026-11-08", slotsDone: 3 })).toBe(1);
     expect(isExhaustedAt(sim, { date: "2026-11-09", slotsDone: 0 })).toBe(false);
     expect(isExhaustedAt(sim, { date: "2026-11-09", slotsDone: 1 })).toBe(true);
-    expect(conclude(sim, { date: "2026-11-06", slotsDone: 0 })).toMatchObject({
-      badge: "2026-11-09 早",
+    // 11-09 only gets 早, so whole days end on 11-08.
+    expect(conclude(sim, { date: "2026-11-05", slotsDone: 0 })).toMatchObject({
+      badge: "2026.11.08 周日",
       tone: "warn",
-      detail: "距今 3 天，还剩 10 顿",
+      detail: "距今 3 天",
+      extraNote: "额外多 1 颗：够 2026.11.09 周一 早",
     });
-    expect(conclude(sim, { date: "2026-11-07", slotsDone: 0 }).tone).toBe("danger");
+    expect(conclude(sim, { date: "2026-11-06", slotsDone: 0 }).tone).toBe("danger");
+    expect(conclude(sim, { date: "2026-11-08", slotsDone: 2 }).detail).toBe("今天是最后吃满的一天");
     expect(conclude(sim, { date: "2026-11-09", slotsDone: 1 })).toMatchObject({ tone: "danger", detail: "今天已吃完" });
   });
 
@@ -195,7 +225,41 @@ describe("reading the simulation at a moment", () => {
   });
 });
 
+describe("reserve", () => {
+  const r = reg("2026-11-01", 1, 0, 1);
+  it("counts whole days at today's regimen and reports the rest", () => {
+    expect(reserveEstimate(25, r)).toEqual({ days: 12, remainder: 1 });
+    expect(reserveEstimate(24, r)).toEqual({ days: 12, remainder: 0 });
+    expect(reserveEstimate(2.5, reg("2026-11-01", 0.5, 0, 0.5))).toEqual({ days: 2, remainder: 0.5 });
+    expect(describeReserve(25, r)).toBe("可用 12 天，另余 1 颗");
+    expect(describeReserve(24, r)).toBe("可用 12 天");
+    expect(describeReserve(1, r)).toBe("不够吃满一天，另余 1 颗");
+  });
+  it("cannot estimate without a daily dose", () => {
+    expect(describeReserve(0, r)).toBe("暂无储备");
+    expect(describeReserve(30, null)).toBe("未设服用规律，无法估算");
+    expect(describeReserve(30, reg("2026-11-01", 0, 0, 0))).toBe("当前停药，不消耗");
+  });
+});
+
 describe("format", () => {
+  it("writes pills as packs when the pack size is known", () => {
+    expect(fmtPacks(84, 28)).toBe("3 盒");
+    expect(fmtPacks(94, 28, "瓶")).toBe("3 瓶 10 颗");
+    expect(fmtPacks(10.5, 28)).toBe("10.5 颗");
+    expect(fmtPacks(30, null)).toBe("30 颗");
+    expect(packNote(68, { perBox: 30, packUnit: "瓶" })).toBe("合 2 瓶 8 颗");
+    expect(packNote(68, { perBox: null, packUnit: "瓶" })).toBeNull();
+    expect(packNote(26, { perBox: 30, packUnit: "瓶" })).toBe("不足 1 瓶");
+    expect(packNote(0, { perBox: 30, packUnit: "瓶" })).toBeNull();
+  });
+
+  it("writes every date as yyyy.mm.dd with the weekday", () => {
+    expect(describeShortfall({ date: "2026-11-02", slot: "morning", status: "missed", resumesOn: "2026-11-04" })).toBe(
+      "2026.11.02 周一 早起药量不足，2026.11.04 周三 补药后恢复",
+    );
+  });
+
   it("formats regimens and quantities", () => {
     expect(formatRegimen(reg("2026-11-01", 1, 0, 1))).toBe("早 1 · 中 0 · 晚 1（2颗/天）");
     expect(fmtQty(0.5)).toBe("0.5");
@@ -212,20 +276,46 @@ describe("Beijing clock", () => {
 });
 
 describe("supply amount", () => {
-  const boxes = (b: string, p: string) => ({ mode: "boxes" as const, pills: "", boxes: b, perBox: p });
-  it("multiplies boxes by pills per box", () => {
+  const boxes = (b: string, p: string, loose = "") => ({ mode: "boxes" as const, pills: "", boxes: b, perBox: p, loose });
+  it("multiplies boxes by pills per box and adds loose pills", () => {
     expect(resolveAmount(boxes("3", "28"))).toEqual({ value: 84 });
     expect(resolveAmount(boxes("2", "10.5"))).toEqual({ value: 21 });
+    // An opened box: 2 sealed boxes and 12 pills left in the third.
+    expect(resolveAmount(boxes("2", "28", "12"))).toEqual({ value: 68 });
+    expect(resolveAmount(boxes("", "28", "12"))).toEqual({ value: 12 });
   });
   it("treats an empty field as no supply and rejects half-filled or invalid boxes", () => {
     expect(resolveAmount(amountState())).toEqual({ value: null });
     expect(resolveAmount(boxes("", ""))).toEqual({ value: null });
     expect(resolveAmount(boxes("2", ""))).toEqual({ error: "请填写每盒颗数" });
-    expect(resolveAmount(boxes("", "30"))).toEqual({ error: "盒数必须是正整数" });
-    expect(resolveAmount(boxes("0", "30"))).toEqual({ error: "盒数必须是正整数" });
+    expect(resolveAmount(boxes("", "30"))).toEqual({ error: "请填写盒数" });
+    expect(resolveAmount(boxes("1.5", "30"))).toEqual({ error: "盒数必须是整数" });
     expect(resolveAmount(boxes("1", "0.3"))).toEqual({ error: "每盒颗数只能是整数或 0.5 的倍数" });
+    expect(resolveAmount(boxes("1", "28", "0.3"))).toEqual({ error: "散装颗数只能是整数或 0.5 的倍数" });
   });
-  it("passes a plain pill count through", () => {
+  it("shows an existing count as whole packs plus loose pills", () => {
+    expect(amountInPacks(72, 30)).toEqual({ mode: "boxes", pills: "", boxes: "2", perBox: "30", loose: "12" });
+    expect(resolveAmount(amountInPacks(72, 30))).toEqual({ value: 72 });
+    expect(amountInPacks(10, 30)).toMatchObject({ boxes: "", loose: "10" });
+    expect(amountInPacks(72, null)).toMatchObject({ mode: "pills", pills: "72" });
+  });
+  it("passes a plain pill count through and starts in boxes when the box size is known", () => {
     expect(resolveAmount(amountState("100"))).toEqual({ value: 100 });
+    expect(amountState("", 28)).toMatchObject({ mode: "boxes", perBox: "28" });
+    expect(amountState("56", 28)).toMatchObject({ mode: "pills", pills: "56" });
+  });
+});
+
+describe("hospital stays", () => {
+  it("takes nothing from home stock on hospital days, both ends included", () => {
+    // 50 pills at 2/day last 25 days; 10 days in hospital push the end back by 10.
+    const sim = simulate([sup("2026-11-06", 50)], [reg("2026-11-06", 1, 0, 1)], {
+      pauses: [{ start: "2026-11-10", end: "2026-11-19" }],
+    });
+    expect(day(sim, "2026-11-09").endOfDayBalance).toBe(42);
+    expect(day(sim, "2026-11-10")).toMatchObject({ paused: true, taken: 0, endOfDayBalance: 42 });
+    expect(day(sim, "2026-11-19")).toMatchObject({ paused: true, endOfDayBalance: 42 });
+    expect(day(sim, "2026-11-20")).toMatchObject({ paused: false, endOfDayBalance: 40 });
+    expect(conclude(sim, momentAt("2026-11-06", 0)).headline).toBe("能吃到：2026.12.10 周四");
   });
 });

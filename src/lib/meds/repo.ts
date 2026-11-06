@@ -2,8 +2,9 @@ import "server-only";
 
 import { asc } from "drizzle-orm";
 import { getDb } from "@/db";
-import { dosageRegimens, medications, supplyLogs } from "@/db/schema";
-import type { MedicationRecord } from "./types";
+import { dosageRegimens, hospitalStays, medications, supplyLogs, visits } from "@/db/schema";
+import { pinyinKeys } from "./pinyin";
+import type { MedicationRecord, StayRecord, VisitRecord } from "./types";
 
 /** Every medication with its full history. The data set is one household's, so load it whole. */
 export async function listMedications(): Promise<MedicationRecord[]> {
@@ -15,7 +16,21 @@ export async function listMedications(): Promise<MedicationRecord[]> {
   ]);
 
   const byId = new Map<number, MedicationRecord>(
-    meds.map((m) => [m.id, { id: m.id, name: m.name, brand: m.brand, dosage: m.dosage, supplies: [], regimens: [] }]),
+    meds.map((m) => [
+      m.id,
+      {
+        id: m.id,
+        name: m.name,
+        brand: m.brand,
+        dosage: m.dosage,
+        packUnit: m.packUnit,
+        perBox: m.perBox,
+        reserve: m.reserve,
+        supplies: [],
+        regimens: [],
+        searchKeys: [...pinyinKeys(m.name), ...pinyinKeys(m.brand ?? "")],
+      },
+    ]),
   );
   for (const s of supplies) {
     byId.get(s.medicationId)?.supplies.push({ id: s.id, date: s.date, quantity: s.quantity });
@@ -30,4 +45,12 @@ export async function listMedications(): Promise<MedicationRecord[]> {
     });
   }
   return [...byId.values()];
+}
+
+export async function listVisits(): Promise<VisitRecord[]> {
+  return getDb().select().from(visits).orderBy(asc(visits.date));
+}
+
+export async function listStays(): Promise<StayRecord[]> {
+  return getDb().select().from(hospitalStays).orderBy(asc(hospitalStays.startDate));
 }

@@ -3,7 +3,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { Board } from "@/components/meds/board";
 import { wallClock } from "@/lib/meds/dates";
-import { listMedications } from "@/lib/meds/repo";
+import { listMedications, listStays, listVisits } from "@/lib/meds/repo";
 
 export default function Page() {
   return (
@@ -26,9 +26,9 @@ export default function Page() {
 
 async function MedicationBoard() {
   await connection();
-  const medications = await listMedications();
+  const [medications, visits, stays] = await Promise.all([listMedications(), listVisits(), listStays()]);
   const serverClock = wallClock();
-  return <Board medications={medications} serverClock={serverClock} />;
+  return <Board medications={medications} visits={visits} stays={stays} serverClock={serverClock} />;
 }
 
 function BoardSkeleton() {

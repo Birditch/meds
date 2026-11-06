@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { addDays, type ISODate } from "@/lib/meds/dates";
+import { addDays, fmtDate, type ISODate } from "@/lib/meds/dates";
 import { fmtQty, formatRegimen } from "@/lib/meds/format";
 import { regimenAt } from "@/lib/meds/simulate";
 import type { ActionResult, MedicationRecord } from "@/lib/meds/types";
@@ -108,6 +108,7 @@ export function SupplyHistory({ medication, today }: { medication: MedicationRec
         <div className="rounded-lg border bg-muted/30 p-3">
           <SupplyForm
             today={today}
+            pack={medication}
             submitLabel="添加"
             onSubmit={(f) => addSupply(medication.id, f)}
             onDone={() => setAdding(false)}
@@ -122,6 +123,7 @@ export function SupplyHistory({ medication, today }: { medication: MedicationRec
             <li key={r.id} className="bg-muted/30 p-3">
               <SupplyForm
                 today={today}
+                pack={medication}
                 initial={{ date: r.date, quantity: r.quantity }}
                 onSubmit={(f) => updateSupply(r.id, f)}
                 onDone={() => setEditing(null)}
@@ -130,7 +132,7 @@ export function SupplyHistory({ medication, today }: { medication: MedicationRec
             </li>
           ) : (
             <li key={r.id} className="flex items-center gap-3 px-3 py-2">
-              <span className="tabular-nums">{r.date}</span>
+              <span className="tabular-nums">{fmtDate(r.date)}</span>
               {r.date > today && <Badge variant="outline">计划</Badge>}
               <span className="ml-auto font-medium tabular-nums">+{fmtQty(r.quantity)} 颗</span>
               <div className="flex">
@@ -148,7 +150,7 @@ export function SupplyHistory({ medication, today }: { medication: MedicationRec
                 </Button>
                 <ConfirmDelete
                   title="删除这条补药记录？"
-                  description={`${r.date} +${fmtQty(r.quantity)} 颗。删除后余量曲线和耗尽时间会重新计算。`}
+                  description={`${fmtDate(r.date)} +${fmtQty(r.quantity)} 颗。删除后余量曲线和耗尽时间会重新计算。`}
                   onConfirm={() => deleteSupply(r.id)}
                 />
               </div>
@@ -219,7 +221,7 @@ export function RegimenTimeline({ medication, today }: { medication: MedicationR
                   <div className="grid gap-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm tabular-nums">
-                        {r.effectiveFrom} 起{r.until ? ` ~ ${r.until}` : ""}
+                        {fmtDate(r.effectiveFrom)} 起{r.until ? ` ~ ${fmtDate(r.until)}` : ""}
                       </span>
                       {state === "current" && <Badge>当前生效</Badge>}
                       {state === "future" && <Badge variant="outline">未来生效</Badge>}
@@ -242,7 +244,7 @@ export function RegimenTimeline({ medication, today }: { medication: MedicationR
                     </Button>
                     <ConfirmDelete
                       title="删除这条服用规律？"
-                      description={`${r.effectiveFrom} 起：${formatRegimen(r)}。删除后这段时间将沿用上一条规律（若没有则视为不服药）。`}
+                      description={`${fmtDate(r.effectiveFrom)} 起：${formatRegimen(r)}。删除后这段时间将沿用上一条规律（若没有则视为不服药）。`}
                       onConfirm={() => deleteRegimen(r.id)}
                     />
                   </div>

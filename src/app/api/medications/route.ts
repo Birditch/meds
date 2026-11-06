@@ -1,8 +1,9 @@
 import { connection } from "next/server";
 import { isValidISODate, wallClock } from "@/lib/meds/dates";
 import { finalDose, momentAt } from "@/lib/meds/simulate";
-import { medicationStatus } from "@/lib/meds/format";
-import { listMedications } from "@/lib/meds/repo";
+import { medicationStatus, reserveEstimate } from "@/lib/meds/format";
+import { listMedications, listStays, listVisits } from "@/lib/meds/repo";
+import { scheduleVisits } from "@/lib/meds/visits";
 
 /**
  * JSON export of all data plus the server-side projection — computed by the same pure
@@ -20,8 +21,12 @@ export async function GET(request: Request) {
   }
   const now = momentAt(today, minutes);
 
-  const medications = (await listMedications()).map((m) => {
-    const s = medicationStatus(m.supplies, m.regimens, now);
+  const [records, visits, stays] = await Promise.all([listMedications(), listVisits(), listStays()]);
+  const schedule = scheduleVisits(visits, now.date);
+  const pauses = stays.map((s) => ({ start: s.startDate, end: s.endDate }));
+  const medications = records.map(({ searchKeys, ...m }) => {
+    void searchKeys; // a client-side search aid, not data
+    const s = medicationStatus(m.supplies, m.regimens, now, schedule, { pauses, perBox: m.perBox });
     return {
       ...m,
       projection: {
@@ -31,8 +36,10 @@ export async function GET(request: Request) {
         finalDose: finalDose(s.sim.outcome),
         conclusion: s.conclusion,
         shortfall: s.shortfall,
+        visitPlan: s.plan,
+        reserve: reserveEstimate(m.reserve, s.current),
       },
     };
   });
-  return Response.json({ now, medications }, { headers: { "cache-control": "no-store" } });
+  return Response.json({ now, visits, hospitalStays: stays, medications }, { headers: { "cache-control": "no-store" } });
 }

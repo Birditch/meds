@@ -5,8 +5,8 @@ import { useId, useState, useTransition, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { formatRegimenShort, fmtQty } from "@/lib/meds/format";
-import type { ISODate } from "@/lib/meds/dates";
-import type { ActionResult, RegimenRecord } from "@/lib/meds/types";
+import { fmtDate, type ISODate } from "@/lib/meds/dates";
+import type { ActionResult, MedicationRecord, RegimenRecord } from "@/lib/meds/types";
 import { regimenSchema, supplySchema, type RegimenFields, type SupplyFields } from "@/lib/meds/validation";
 import { DatePicker } from "./date-picker";
 import { QuantityInput, parseQuantity } from "./quantity-input";
@@ -50,6 +50,7 @@ export function useActionForm() {
 export function SupplyForm({
   today,
   initial,
+  pack,
   submitLabel = "保存",
   onSubmit,
   onDone,
@@ -57,13 +58,15 @@ export function SupplyForm({
 }: {
   today: ISODate;
   initial?: SupplyFields;
+  /** The medication's pack: a new entry starts in packs when the size is known. */
+  pack?: Pick<MedicationRecord, "perBox" | "packUnit">;
   submitLabel?: string;
   onSubmit: (fields: SupplyFields) => Promise<ActionResult>;
   onDone?: () => void;
   onCancel?: () => void;
 }) {
   const [date, setDate] = useState(initial?.date ?? today);
-  const [amount, setAmount] = useState(() => amountState(initial ? String(initial.quantity) : ""));
+  const [amount, setAmount] = useState(() => amountState(initial ? String(initial.quantity) : "", pack?.perBox ?? null));
   const { pending, error, setError, submit } = useActionForm();
   const uid = useId();
 
@@ -72,7 +75,7 @@ export function SupplyForm({
       className="grid gap-4"
       onSubmit={(e) => {
         e.preventDefault();
-        const resolved = resolveAmount(amount);
+        const resolved = resolveAmount(amount, pack?.packUnit);
         if ("error" in resolved) return setError(resolved.error);
         const parsed = supplySchema.safeParse({ date, quantity: resolved.value });
         if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "输入无效");
@@ -84,7 +87,7 @@ export function SupplyForm({
           <Label htmlFor={`${uid}-date`}>开药日期</Label>
           <DatePicker id={`${uid}-date`} label="开药日期" value={date} onChange={setDate} today={today} />
         </div>
-        <SupplyAmountInput id={`${uid}-qty`} label="数量" value={amount} onChange={setAmount} />
+        <SupplyAmountInput id={`${uid}-qty`} label="数量" value={amount} onChange={setAmount} unit={pack?.packUnit} />
       </div>
       <p className="text-xs text-muted-foreground">当天添加的药量在当天早上服药前即计入余量。</p>
       <FormError>{error}</FormError>
@@ -189,10 +192,10 @@ export function RegimenForm({
       </div>
       <DoseFields idPrefix={idPrefix} values={doses} onChange={setDoses} />
       <p className="text-xs text-muted-foreground">
-        从 {effectiveFrom} 当天起按新规律扣减，此前的日期仍按当时生效的规律计算。
+        从 {fmtDate(effectiveFrom)} 当天起按新规律扣减，此前的日期仍按当时生效的规律计算。
         {clash && (
           <span className="mt-1 block text-amber-700 dark:text-amber-400">
-            {effectiveFrom} 已有规律（{formatRegimenShort(clash)}），保存后将覆盖该天的规律。
+            {fmtDate(effectiveFrom)} 已有规律（{formatRegimenShort(clash)}），保存后将覆盖该天的规律。
           </span>
         )}
       </p>
