@@ -1,4 +1,4 @@
-import { diffDays, fmtDate } from "./dates";
+import { diffDays, fmtDate, type ISODate } from "./dates";
 import {
   SLOT_LABEL,
   balanceAt,
@@ -32,6 +32,43 @@ export const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixe
 export function formatRegimen(d: Dose | null): string {
   if (!d) return "未设置";
   return `早 ${fmtQty(d.morning)} · 中 ${fmtQty(d.noon)} · 晚 ${fmtQty(d.evening)}（${fmtQty(dailyTotal(d))}颗/天）`;
+}
+
+/**
+ * Whether a medication is being taken on `date`, which splits the board into 在吃 / 未在吃.
+ * A regimen with doses that starts later counts as taken (its stock still needs planning);
+ * a regimen of all zeros is a stop.
+ */
+export type Intake =
+  | { kind: "taking" }
+  | { kind: "starting"; from: ISODate }
+  | { kind: "stopped"; since: ISODate }
+  | { kind: "unset" };
+
+export function intakeAt(regimens: readonly RegimenInput[], date: ISODate): Intake {
+  const current = regimenAt(regimens, date);
+  if (current && dailyTotal(current) > 0) return { kind: "taking" };
+  const start = regimens
+    .filter((r) => r.effectiveFrom > date && dailyTotal(r) > 0)
+    .reduce<RegimenInput | null>((a, r) => (!a || r.effectiveFrom < a.effectiveFrom ? r : a), null);
+  if (start) return { kind: "starting", from: start.effectiveFrom };
+  return current ? { kind: "stopped", since: current.effectiveFrom } : { kind: "unset" };
+}
+
+export const isTaking = (i: Intake) => i.kind === "taking" || i.kind === "starting";
+
+/** "2026.11.20 周五 起服用", "已停药", "未设服用规律"; null while taken. */
+export function intakeLabel(i: Intake): string | null {
+  switch (i.kind) {
+    case "taking":
+      return null;
+    case "starting":
+      return `${fmtDate(i.from)} 起服用`;
+    case "stopped":
+      return "已停药";
+    case "unset":
+      return "未设服用规律";
+  }
 }
 
 /** "早1/中1/晚2" */

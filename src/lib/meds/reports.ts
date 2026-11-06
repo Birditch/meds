@@ -13,7 +13,10 @@ import {
   fmtPacks,
   fmtQty,
   formatRegimen,
+  intakeAt,
+  isTaking,
   medicationStatus,
+  type Intake,
   type MedicationStatus,
 } from "./format";
 import { dailyTotal, type Moment } from "./simulate";
@@ -30,16 +33,25 @@ export interface ReportInput {
 export interface ReportItem {
   medication: MedicationRecord;
   status: MedicationStatus;
+  intake: Intake;
+  /** Being taken (or about to start): 在吃. */
+  taking: boolean;
 }
 
+/** Every medication, the ones being taken first (otherwise in the given order). */
 function evaluate(input: ReportInput) {
   const schedule = scheduleVisits(input.visits, input.now.date);
   const pauses = input.stays.map((s) => ({ start: s.startDate, end: s.endDate }));
-  const items: ReportItem[] = input.medications.map((m) => ({
-    medication: m,
-    status: medicationStatus(m.supplies, m.regimens, input.now, schedule, { pauses, perBox: m.perBox, counts: m.counts }),
-  }));
-  return { schedule, items };
+  const items: ReportItem[] = input.medications.map((m) => {
+    const intake = intakeAt(m.regimens, input.now.date);
+    return {
+      medication: m,
+      status: medicationStatus(m.supplies, m.regimens, input.now, schedule, { pauses, perBox: m.perBox, counts: m.counts }),
+      intake,
+      taking: isTaking(intake),
+    };
+  });
+  return { schedule, items: [...items.filter((it) => it.taking), ...items.filter((it) => !it.taking)] };
 }
 
 /** "盐酸鲁拉西酮片 · 罗舒达 · 40mg" */
@@ -90,7 +102,10 @@ export interface VisitReport {
   /** The visit after this one, if entered. */
   following: ISODate | null;
   needed: VisitItem[];
+  /** Taken, and the stock already lasts. */
   covered: VisitItem[];
+  /** Not being taken: nothing to get. */
+  inactive: VisitItem[];
 }
 
 /** The list for one upcoming visit (the next one by default); null when there is no such visit. */
@@ -110,7 +125,8 @@ export function visitReport(input: ReportInput, date?: ISODate): VisitReport | n
     estimated: v.estimated,
     following: schedule[index + 1]?.date ?? null,
     needed: all.filter((it) => it.need.need > 0),
-    covered: all.filter((it) => it.need.need === 0),
+    covered: all.filter((it) => it.need.need === 0 && it.taking),
+    inactive: all.filter((it) => it.need.need === 0 && !it.taking),
   };
 }
 
@@ -145,6 +161,7 @@ export function gapWarning(item: VisitItem, report: VisitReport): string | null 
 /* ------------------------------------- stock list ------------------------------------- */
 
 export interface StockReport {
+  /** Being taken first, then the rest. */
   items: ReportItem[];
   /** The next visit, for the "需开" column. */
   nextVisit: ISODate | null;

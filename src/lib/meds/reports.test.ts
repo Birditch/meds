@@ -95,6 +95,33 @@ describe("visit list", () => {
   });
 });
 
+describe("medications not being taken", () => {
+  // Stopped on 11-01 with stock left; and one with no regimen at all.
+  const D = { ...med("药品D", { supplies: [["2026-10-01", 50]] }), regimens: [{ id: 90, effectiveFrom: "2026-10-01", morning: 1, noon: 0, evening: 0 }, { id: 91, effectiveFrom: "2026-11-01", morning: 0, noon: 0, evening: 0 }] };
+  const E = { ...med("药品E"), regimens: [] };
+  const withInactive: ReportInput = { ...input(["2026-12-03"]), medications: [D, A, E, B, C] };
+
+  it("keeps them out of the visit list's tables", () => {
+    const r = visitReport(withInactive)!;
+    expect(r.needed.map((it) => it.medication.name)).toEqual(["药品A", "药品B"]);
+    expect(r.covered.map((it) => it.medication.name)).toEqual(["药品C"]);
+    expect(r.inactive.map((it) => [it.medication.name, it.intake.kind])).toEqual([
+      ["药品D", "stopped"],
+      ["药品E", "unset"],
+    ]);
+  });
+
+  it("lists the ones being taken first", () => {
+    expect(stockReport(withInactive).items.map((it) => [it.medication.name, it.taking])).toEqual([
+      ["药品A", true],
+      ["药品B", true],
+      ["药品C", true],
+      ["药品D", false],
+      ["药品E", false],
+    ]);
+  });
+});
+
 describe("stock and reserve lists", () => {
   it("shows current stock without the reserve", () => {
     const r = stockReport(input(["2026-12-03"]));

@@ -1,7 +1,17 @@
 "use client";
 
-import { ClipboardCopyIcon, ListPlusIcon, PlusIcon, RotateCcwIcon, ScanTextIcon, TagIcon, TriangleAlertIcon, XIcon } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import {
+  ClipboardCopyIcon,
+  HistoryIcon,
+  ListPlusIcon,
+  PlusIcon,
+  RotateCcwIcon,
+  ScanTextIcon,
+  TagIcon,
+  TriangleAlertIcon,
+  XIcon,
+} from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { importStock } from "@/app/actions";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { fmtDate } from "@/lib/meds/dates";
+import { fmtDate, wallClock } from "@/lib/meds/dates";
 import { COUNT_MOMENT_LABEL, fmtQty, formatRegimenShort, packNote, type MedicationStatus } from "@/lib/meds/format";
 import {
   importTemplate,
@@ -25,6 +35,7 @@ import { importSchema, medicationSchema, perBoxSchema, type ImportFields } from 
 import { cn } from "@/lib/utils";
 import { DatePicker } from "./date-picker";
 import { FormError, SubmitButton, useActionForm } from "./forms";
+import { clearImportDraft, loadImportDraft, saveImportDraft } from "./import-draft";
 
 type Amount = { boxes: string; loose: string };
 type Doses = { morning: string; noon: string; evening: string };
@@ -101,6 +112,27 @@ function newRow(e?: ImportEntry, notes: string[] = [], choices: number[] = []): 
     notes,
     choices,
   };
+}
+
+/** A saved draft against today's list: rows of deleted medications go, new medications get a row. */
+function restoreRows(saved: Row[], medications: MedicationRecord[]): Row[] {
+  const byId = new Map(medications.map((m) => [m.id, m]));
+  const kept = saved
+    .filter((r) => r && typeof r.key === "string" && (r.medId === null || byId.has(r.medId)))
+    .map((r) => {
+      const m = r.medId === null ? null : byId.get(r.medId)!;
+      const choices = (r.choices ?? []).filter((id) => byId.has(id));
+      return m ? { ...r, name: m.name, brand: m.brand ?? "", dosage: m.dosage, choices } : { ...r, choices };
+    });
+  // New-row keys continue after the restored ones.
+  for (const r of kept) seq = Math.max(seq, Number(/^row-(\d+)$/.exec(r.key)?.[1] ?? 0));
+  return [...kept, ...medications.filter((m) => !kept.some((r) => r.medId === m.id)).map(existingRow)];
+}
+
+/** "2026.11.07 周六 01:55" in Beijing time. */
+function savedAtText(ms: number) {
+  const { date, minutes } = wallClock(new Date(ms));
+  return `${fmtDate(date)} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
 /** Values read for a medication override what the row had. */
@@ -200,7 +232,7 @@ export function BulkImportDialog({
         <DialogHeader>
           <DialogTitle>一键录入</DialogTitle>
           <DialogDescription>
-            粘贴清单或直接在下面填写，一次把所有药的当前余量、储备和每盒颗数录进系统，也可以顺带新增药品。留空的格子保持不变。
+            粘贴清单或直接在下面填写，一次把所有药的当前余量、储备和每盒颗数录进系统，也可以顺带新增药品。留空的格子保持不变。填写的内容会自动保存在这台设备上，录入成功后清除。
           </DialogDescription>
         </DialogHeader>
         {open && (
@@ -223,12 +255,35 @@ function BulkImportForm({
   onDone: () => void;
 }) {
   const uid = useId();
-  const [text, setText] = useState("");
+  // Read once: this form is only rendered on the client, after the dialog opens.
+  const [draft] = useState(() => loadImportDraft<Row>());
+  const [restoredAt, setRestoredAt] = useState<number | null>(draft?.savedAt ?? null);
+  const [text, setText] = useState(draft?.text ?? "");
   const [unread, setUnread] = useState<string[]>([]);
-  const [rows, setRows] = useState<Row[]>(() => medications.map(existingRow));
-  const [at, setAt] = useState<Moment>(now);
+  const [rows, setRows] = useState<Row[]>(() => (draft ? restoreRows(draft.rows, medications) : medications.map(existingRow)));
+  const [at, setAt] = useState<Moment>(draft?.at ?? now);
   const { pending, error, setError, submit } = useActionForm();
   const byId = useMemo(() => new Map(medications.map((m) => [m.id, m])), [medications]);
+
+  // Keep a draft while anything is filled in; an untouched form leaves none.
+  const pristine = useMemo(() => JSON.stringify(medications.map(existingRow)), [medications]);
+  const dirty = text.trim() !== "" || JSON.stringify(rows) !== pristine;
+  const finished = useRef(false);
+  useEffect(() => {
+    if (finished.current) return;
+    if (dirty) saveImportDraft({ savedAt: Date.now(), text, rows, at });
+    else clearImportDraft();
+  }, [dirty, text, rows, at]);
+
+  const discardDraft = () => {
+    clearImportDraft();
+    setRestoredAt(null);
+    setText("");
+    setUnread([]);
+    setRows(medications.map(existingRow));
+    setAt(now);
+    setError(null);
+  };
 
   const atLater = at.date > now.date || (at.date === now.date && at.slotsDone > now.slotsDone);
   const built = useMemo(
@@ -321,6 +376,8 @@ function BulkImportForm({
         submit(
           () => importStock(input),
           () => {
+            finished.current = true;
+            clearImportDraft();
             const updated = items.length - newCount;
             toast.success(`已录入：${[updated && `更新 ${updated} 种`, newCount && `新增 ${newCount} 种`].filter(Boolean).join("，")}`);
             onDone();
@@ -328,6 +385,18 @@ function BulkImportForm({
         );
       }}
     >
+      {restoredAt !== null && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-200">
+          <HistoryIcon className="size-4 shrink-0" />
+          <span className="flex-1">
+            已恢复 {savedAtText(restoredAt)} 没有提交的内容，清点时间仍是 {fmtDate(at.date)} {COUNT_MOMENT_LABEL[at.slotsDone]}。核对后点下面的“一键录入”提交。
+          </span>
+          <Button type="button" size="xs" variant="ghost" onClick={discardDraft}>
+            丢弃，重新开始
+          </Button>
+        </div>
+      )}
+
       {/* 1. paste */}
       <section className="grid gap-2">
         <div className="flex flex-wrap items-end justify-between gap-2">

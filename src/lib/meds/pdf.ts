@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import PDFDocument from "pdfkit";
 import { fmtDate, weekdayCN } from "./dates";
-import { COUNT_MOMENT_LABEL, fmtQty, formatRegimen, formatRegimenShort, packNote } from "./format";
+import { COUNT_MOMENT_LABEL, fmtQty, formatRegimen, formatRegimenShort, intakeLabel, packNote } from "./format";
 import {
   countLines,
   gapWarning,
@@ -296,7 +296,10 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
     "只按现有药物计算，不含药物储备；每一次补药都视为一次购买。",
   ]);
 
-  w.paragraph(`需开药 ${r.needed.length} 种，无需开药 ${r.covered.length} 种。`, { bold: true });
+  w.paragraph(
+    `需开药 ${r.needed.length} 种，无需开药 ${r.covered.length} 种` + (r.inactive.length ? `，未在吃 ${r.inactive.length} 种（不需要开）。` : "。"),
+    { bold: true },
+  );
 
   if (r.needed.length) {
     w.table(
@@ -354,7 +357,7 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
         { text: `${fmtQty(it.need.stockBefore)} 颗` },
         { text: `${fmtQty(it.need.demand)} 颗`, sub: it.need.supplied > 0 ? `已记补药 +${fmtQty(it.need.supplied)}` : null },
         {
-          text: it.need.demand > 0 ? "够用" : it.status.current ? "期间不服用" : "未设服用规律",
+          text: it.need.demand > 0 ? "够用" : "期间不服用",
           sub: gapWarning(it, r) ? "但等不到这次就诊就会断药" : null,
           color: gapWarning(it, r) ? ALERT : INK,
         },
@@ -362,7 +365,12 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
     );
   }
 
-  if (!r.needed.length && !r.covered.length) w.paragraph("暂无药品。", { color: MUTED });
+  if (r.inactive.length) {
+    w.section(`未在吃（${r.inactive.length} 种）`, "已停药或没设服用规律，不需要开药。");
+    w.paragraph(r.inactive.map((it, i) => `${i + 1}. ${medicationLabel(it.medication)}（${intakeLabel(it.intake)}）`).join("\n"));
+  }
+
+  if (!r.needed.length && !r.covered.length && !r.inactive.length) w.paragraph("暂无药品。", { color: MUTED });
   return w.finish();
 }
 
@@ -380,27 +388,30 @@ export async function renderStockPdf(r: StockReport, ctx: RenderContext): Promis
     return w.finish();
   }
 
-  w.table(
-    null,
-    [
-      { header: "#", width: 4, align: "center" },
-      { header: "药品", width: 32 },
-      { header: "服用规律", width: 17 },
-      { header: "现有", width: 19, align: "right" },
-      { header: "能吃到", width: 28 },
-    ],
-    r.items.map((it, i) => [
-      { text: String(i + 1) },
+  const taking = r.items.filter((it) => it.taking);
+  const inactive = r.items.filter((it) => !it.taking);
+  const columns: Column[] = [
+    { header: "#", width: 4, align: "center" },
+    { header: "药品", width: 32 },
+    { header: "服用规律", width: 17 },
+    { header: "现有", width: 19, align: "right" },
+    { header: "能吃到", width: 28 },
+  ];
+  // Numbered across both tables, matching the records below.
+  const rows = (items: ReportItem[], offset: number): Cell[][] =>
+    items.map((it, i) => [
+      { text: String(offset + i + 1) },
       nameCell(it.medication),
       regimenCell(it),
       { ...pillsCell(it.status.balanceNow, it.medication), bold: true },
       {
-        text: it.status.conclusion.badge,
-        sub: it.status.conclusion.detail,
-        color: it.status.conclusion.tone === "danger" ? ALERT : INK,
+        text: it.taking ? it.status.conclusion.badge : intakeLabel(it.intake)!,
+        sub: it.taking ? it.status.conclusion.detail : it.intake.kind === "stopped" ? `${fmtDate(it.intake.since)} 起` : null,
+        color: it.taking && it.status.conclusion.tone === "danger" ? ALERT : it.taking ? INK : MUTED,
       },
-    ]),
-  );
+    ]);
+  if (taking.length) w.table({ title: `在吃（${taking.length} 种）` }, columns, rows(taking, 0));
+  if (inactive.length) w.table({ title: `未在吃（${inactive.length} 种）`, note: "已停药或没设服用规律。" }, columns, rows(inactive, taking.length));
 
   w.section("购买与盘点记录");
   r.items.forEach((it, i) => {

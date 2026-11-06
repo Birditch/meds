@@ -26,7 +26,13 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   new medication). "填入当前清单" writes the current list in that format to edit and paste back.
   A stock equal to the projection records nothing; a new medication's stock becomes a supply that
   day (plus the doses already taken by then). Medications without pills per pack are tagged
-  **未写明每盒颗数** on the board, filterable, and in the import table.
+  **未写明每盒颗数** on the board, filterable, and in the import table. The form is saved as a
+  draft on the device while it is filled in (restored on the next open, e.g. after a failed
+  submit or a reload) and cleared once the import succeeds.
+- **在吃 / 未在吃**: the board shows the medications being taken first; a tab (`?tab=inactive`)
+  shows the ones stopped (regimen all 0) or without a regimen. A regimen that starts later
+  counts as taken. Search tells you when the matches are in the other tab. The visit plan and
+  the PDF lists leave the medications not being taken out of what to get.
 - **Regimen timeline**: morning / noon / evening doses, each with an `effectiveFrom` date.
   A regimen never applies before its date; setting one again for the same date overwrites it.
 - **Reserve (药物储备)**: extra pills kept at home, outside the stock and the projection. The app

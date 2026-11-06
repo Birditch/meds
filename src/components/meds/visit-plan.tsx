@@ -146,12 +146,16 @@ function NeedCell({ need, medication }: { need: VisitNeed; medication: Medicatio
 export function VisitPlan({
   visits,
   medications,
+  notTaking = 0,
   statuses,
   today,
   className,
 }: {
   visits: VisitRecord[];
+  /** The medications being taken; the others need nothing. */
   medications: MedicationRecord[];
+  /** How many medications are left out as not being taken. */
+  notTaking?: number;
   statuses: Map<number, MedicationStatus>;
   today: ISODate;
   className?: string;
@@ -289,7 +293,7 @@ export function VisitPlan({
               )}
 
               {medications.length === 0 ? (
-                <p className="text-sm text-muted-foreground">还没有药品。</p>
+                <p className="text-sm text-muted-foreground">{notTaking > 0 ? "目前没有在吃的药，不需要开药。" : "还没有药品。"}</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -335,6 +339,10 @@ export function VisitPlan({
             </section>
           );
         })}
+
+        {upcoming.length > 0 && notTaking > 0 && (
+          <p className="text-xs text-muted-foreground">另有 {notTaking} 种未在吃的药（已停药或没设规律）不需要开药，没有列出。</p>
+        )}
 
         {upcoming.length > 0 && medications.some((m) => m.perBox) && (
           <p className="text-xs text-muted-foreground">

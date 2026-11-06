@@ -1,6 +1,7 @@
 "use client";
 
 import { ChartSplineIcon, ClipboardListIcon, PillIcon, PlusIcon, SearchIcon, SettingsIcon, TagIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,8 +14,12 @@ import {
   describeShortfall,
   fmtQty,
   formatRegimen,
+  intakeAt,
+  intakeLabel,
+  isTaking,
   medicationStatus,
   packNote,
+  type Intake,
   type MedicationStatus,
 } from "@/lib/meds/format";
 import { searchMedications } from "@/lib/meds/search";
@@ -24,12 +29,25 @@ import { scheduleVisits } from "@/lib/meds/visits";
 import { BulkImportDialog } from "./bulk-import";
 import { DetailDialog } from "./detail-dialog";
 import { ExportMenu } from "./export-menu";
+import { useHasImportDraft } from "./import-draft";
 import { AddSupplyDialog, CreateMedicationDialog, RegimenDialog, ReserveDialog } from "./medication-dialogs";
 import { StatusBadge, toneText } from "./status-badge";
 import { HospitalStays } from "./stays";
 import { VisitPlan } from "./visit-plan";
 
 type Panel = { kind: "supply" | "regimen" | "reserve" | "detail"; id: number } | null;
+
+/** 在吃 / 未在吃, kept in the URL (`?tab=inactive`) so it survives a reload and can be linked. */
+type Tab = "active" | "inactive";
+const TAB_LABEL: Record<Tab, string> = { active: "在吃", inactive: "未在吃" };
+
+function tabHref(tab: Tab, search: string) {
+  const params = new URLSearchParams(search);
+  if (tab === "inactive") params.set("tab", "inactive");
+  else params.delete("tab");
+  const q = params.toString();
+  return q ? `?${q}` : "/";
+}
 
 export function Board({
   medications,
@@ -50,6 +68,11 @@ export function Board({
   const [panel, setPanel] = useState<Panel>(null);
   const [query, setQuery] = useState("");
   const [onlyNoPerBox, setOnlyNoPerBox] = useState(false);
+  const hasImportDraft = useHasImportDraft();
+  const searchParams = useSearchParams();
+  const tab: Tab = searchParams.get("tab") === "inactive" ? "inactive" : "active";
+  // The history API is wired into the router: useSearchParams follows without a server round trip.
+  const showTab = (t: Tab) => window.history.pushState(null, "", tabHref(t, window.location.search));
 
   const schedule = useMemo(() => scheduleVisits(visits, date), [visits, date]);
   const pauses = useMemo(() => stays.map((s) => ({ start: s.startDate, end: s.endDate })), [stays]);
@@ -61,12 +84,18 @@ export function Board({
       ),
     [medications, now, schedule, pauses],
   );
-  const noPerBox = medications.filter((m) => !m.perBox).length;
+  const intakes = useMemo(() => new Map(medications.map((m) => [m.id, intakeAt(m.regimens, date)])), [medications, date]);
+  const taking = useMemo(() => medications.filter((m) => isTaking(intakes.get(m.id)!)), [medications, intakes]);
+  const notTaking = useMemo(() => medications.filter((m) => !isTaking(intakes.get(m.id)!)), [medications, intakes]);
+  const inTab = tab === "active" ? taking : notTaking;
+
+  const noPerBox = inTab.filter((m) => !m.perBox).length;
   const filterNoPerBox = onlyNoPerBox && noPerBox > 0;
-  const shown = useMemo(
-    () => searchMedications(filterNoPerBox ? medications.filter((m) => !m.perBox) : medications, query),
-    [medications, query, filterNoPerBox],
-  );
+  const filtering = filterNoPerBox || query.trim() !== "";
+  const match = (list: MedicationRecord[]) => searchMedications(filterNoPerBox ? list.filter((m) => !m.perBox) : list, query);
+  const matches = { active: match(taking), inactive: match(notTaking) };
+  const shown = matches[tab];
+  const other: Tab = tab === "active" ? "inactive" : "active";
 
   const open = (kind: NonNullable<Panel>["kind"]) => (panel?.kind === kind ? medications.find((m) => m.id === panel.id) ?? null : null);
   const close = (o: boolean) => !o && setPanel(null);
@@ -92,9 +121,14 @@ export function Board({
               />
             </div>
           )}
-          <Button variant="outline" onClick={() => setImporting(true)}>
+          <Button variant="outline" onClick={() => setImporting(true)} title={hasImportDraft ? "有没提交的录入内容，打开即可继续" : undefined}>
             <ClipboardListIcon />
             一键录入
+            {hasImportDraft && (
+              <Badge variant="secondary" className="h-4 px-1 text-[10px]">
+                草稿
+              </Badge>
+            )}
           </Button>
           {medications.length > 0 && <ExportMenu nextVisit={upcoming[0] ?? null} />}
           <Button onClick={() => setCreating(true)}>
@@ -103,6 +137,40 @@ export function Board({
           </Button>
         </div>
       </div>
+
+      {medications.length > 0 && (
+        <div className="-mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <div role="tablist" aria-label="按是否在吃分开显示" className="inline-flex rounded-lg border p-0.5 text-sm">
+            {(["active", "inactive"] as const).map((t) => (
+              <a
+                key={t}
+                role="tab"
+                aria-selected={tab === t}
+                href={tabHref(t, searchParams.toString())}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                  e.preventDefault();
+                  showTab(t);
+                }}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-3 py-1 transition-colors",
+                  tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {TAB_LABEL[t]}
+                <span className={cn("text-xs tabular-nums", tab === t ? "opacity-80" : "")}>
+                  {filtering ? matches[t].length : t === "active" ? taking.length : notTaking.length}
+                </span>
+              </a>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {tab === "active"
+              ? "当前按规律在吃的药（含之后才开始吃的）。"
+              : "已停药或没设服用规律的药：不消耗、不需要开药。改规律后会自动回到“在吃”。"}
+          </p>
+        </div>
+      )}
 
       {noPerBox > 0 && (
         <div className="-mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -141,19 +209,31 @@ export function Board({
       ) : shown.length === 0 ? (
         <div className="grid place-items-center gap-3 rounded-xl border border-dashed py-12 text-center">
           <p className="text-sm text-muted-foreground">
-            {query.trim() ? `没有和“${query.trim()}”匹配的药品` : "没有符合筛选的药品"}
-            {filterNoPerBox && "（只看未写明每盒颗数的）"}
+            {filtering
+              ? `“${TAB_LABEL[tab]}”里${query.trim() ? `没有和“${query.trim()}”匹配的药品` : "没有符合筛选的药品"}${filterNoPerBox ? "（只看未写明每盒颗数的）" : ""}`
+              : tab === "active"
+                ? "目前没有在吃的药。"
+                : "没有未在吃的药。把一种药的服用规律改成早、中、晚都是 0（停药），它就会归到这里。"}
           </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setQuery("");
-              setOnlyNoPerBox(false);
-            }}
-          >
-            清除搜索和筛选
-          </Button>
+          <div className="flex flex-wrap justify-center gap-2">
+            {matches[other].length > 0 && (
+              <Button variant="outline" size="sm" onClick={() => showTab(other)}>
+                {filtering ? `“${TAB_LABEL[other]}”里有 ${matches[other].length} 个匹配` : `查看${TAB_LABEL[other]}的 ${matches[other].length} 种药`}
+              </Button>
+            )}
+            {filtering && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setQuery("");
+                  setOnlyNoPerBox(false);
+                }}
+              >
+                清除搜索和筛选
+              </Button>
+            )}
+          </div>
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -162,6 +242,7 @@ export function Board({
               key={m.id}
               medication={m}
               status={statuses.get(m.id)!}
+              intake={intakes.get(m.id)!}
               onSupply={() => setPanel({ kind: "supply", id: m.id })}
               onRegimen={() => setPanel({ kind: "regimen", id: m.id })}
               onReserve={() => setPanel({ kind: "reserve", id: m.id })}
@@ -172,7 +253,14 @@ export function Board({
       )}
 
       <div className="grid items-start gap-4 lg:grid-cols-3">
-        <VisitPlan visits={visits} medications={medications} statuses={statuses} today={date} className="lg:col-span-2" />
+        <VisitPlan
+          visits={visits}
+          medications={taking}
+          notTaking={notTaking.length}
+          statuses={statuses}
+          today={date}
+          className="lg:col-span-2"
+        />
         <HospitalStays stays={stays} today={date} />
       </div>
 
@@ -208,6 +296,7 @@ function Row({ label, children }: { label: React.ReactNode; children: React.Reac
 function MedicationCard({
   medication,
   status,
+  intake,
   onSupply,
   onRegimen,
   onReserve,
@@ -215,6 +304,7 @@ function MedicationCard({
 }: {
   medication: MedicationRecord;
   status: MedicationStatus;
+  intake: Intake;
   onSupply: () => void;
   onRegimen: () => void;
   onReserve: () => void;
@@ -224,11 +314,22 @@ function MedicationCard({
   const next = status.plan.visits[0];
   const balanceNote = packNote(status.balanceNow, medication);
   const reserveNote = packNote(medication.reserve, medication);
+  // The status box already says 已停药 / 未设规律: the badge adds when.
+  const intakeNote =
+    intake.kind === "starting" ? intakeLabel(intake) : intake.kind === "stopped" ? `${fmtDate(intake.since)} 起停药` : null;
   return (
     <Card className="gap-4">
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
           <CardTitle className="text-lg">{medication.name}</CardTitle>
+          {intakeNote && (
+            <Badge
+              variant="outline"
+              className={intake.kind === "starting" ? "border-sky-300 text-sky-800 dark:border-sky-800 dark:text-sky-300" : "text-muted-foreground"}
+            >
+              {intakeNote}
+            </Badge>
+          )}
           {!medication.perBox && (
             <Badge variant="outline" className={noPerBoxTag} title="没有每盒颗数：就诊时只能按颗算，无法换算成盒数">
               <TagIcon />
@@ -272,7 +373,7 @@ function MedicationCard({
             <span className="text-xs text-muted-foreground">{describeReserve(medication.reserve, status.current)}</span>
           )}
         </Row>
-        {next && (
+        {next && isTaking(intake) && (
           <Row label={`下次就诊 ${fmtDate(next.date)}`}>
             {next.need === 0 ? (
               <span className="text-muted-foreground">无需开药</span>
