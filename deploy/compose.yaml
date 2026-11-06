@@ -1,0 +1,42 @@
+# Production service on the deploy host, installed to /opt/meds/compose.yaml by deploy.sh.
+# PostgreSQL is the host's own (127.0.0.1:5432); there is no database container here.
+#
+# Image tags: deploy.sh builds meds:sha-<commit> from a pinned checkout, starts it, and only
+# once it is healthy re-tags it as meds:current. A plain `docker compose up -d` therefore
+# restarts the last healthy release. There is deliberately no `build:` here, so compose can
+# never quietly build from whatever happens to be checked out.
+name: meds
+services:
+  web:
+    image: meds:${MEDS_IMAGE_TAG:-current}
+    container_name: meds-web
+    restart: unless-stopped
+    init: true
+    # Host network so the app reaches 127.0.0.1:5432. It binds loopback only; nginx proxies to it.
+    network_mode: host
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 127.0.0.1
+      PORT: "${MEDS_PORT:-28100}"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache:uid=1000,gid=1000
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    mem_limit: 512m
+    cpus: "1.0"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${PORT}/api/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

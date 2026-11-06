@@ -1,0 +1,22 @@
+# Local development / acceptance database only (production uses the host's PostgreSQL).
+#   docker compose -f compose.dev.yaml up -d --wait
+# Synthetic credentials, loopback only, data kept in the named volume meds-dev_pgdata.
+name: meds-dev
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: meds
+      POSTGRES_USER: meds
+      POSTGRES_PASSWORD: meds-dev-only
+    ports:
+      - "127.0.0.1:${MEDS_DEV_PG_PORT:-55432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meds -d meds"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  pgdata:
