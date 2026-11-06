@@ -427,3 +427,50 @@ export function fullDays(sim: Simulation): FullDays | null {
   }
   return { lastFullDay: idx > 0 ? sim.days[idx - 1].date : null, shortDay: snap };
 }
+
+/**
+ * The fewest pills a new supply on `supply.date` needs so that every dose from then through
+ * the evening of `until` is taken in full, given what is already recorded: 0 when the stock
+ * already lasts, null when no amount can do it (a later stock count resets it in between).
+ * Found by searching with the simulation itself, so hospital stays and counts all count.
+ */
+export function supplyToLast(
+  supplies: readonly SupplyInput[],
+  regimens: readonly RegimenInput[],
+  supply: { date: ISODate; recordedAt?: number },
+  until: ISODate,
+  options: Pick<SimulateOptions, "pauses" | "counts"> = {},
+): number | null {
+  const from = toDayNum(supply.date);
+  const last = toDayNum(until);
+  if (last < from) return 0;
+  // A supply entered after that day's count only comes in at the count.
+  const sameDay = options.counts?.find((c) => c.date === supply.date);
+  const late =
+    sameDay !== undefined && sameDay.recordedAt !== undefined && supply.recordedAt !== undefined && supply.recordedAt > sameDay.recordedAt;
+  const firstSlot = late ? sameDay.slotsDone : 0;
+
+  const run = (halves: number) =>
+    simulate([...supplies, { date: supply.date, quantity: halves / 2, recordedAt: supply.recordedAt }], regimens, {
+      ...options,
+      until,
+      maxYears: 0,
+    });
+  const slotsIn = (sim: Simulation) =>
+    sim.days
+      .filter((d) => d.day >= from && d.day <= last)
+      .flatMap((d) => (d.day === from ? d.slots.slice(firstSlot) : d.slots));
+  const covered = (halves: number) => slotsIn(run(halves)).every((s) => s.status === "none" || s.status === "full");
+
+  if (covered(0)) return 0;
+  // Enough for every dose in the span even from an empty stock; if that fails, nothing will.
+  let hi = slotsIn(run(0)).reduce((sum, s) => sum + toHalves(s.required), 0);
+  if (!covered(hi)) return null;
+  let lo = 0; // not covered
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (covered(mid)) hi = mid;
+    else lo = mid;
+  }
+  return fromHalves(hi);
+}

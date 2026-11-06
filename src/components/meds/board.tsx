@@ -176,7 +176,7 @@ export function Board({
 
       <CreateMedicationDialog open={creating} onOpenChange={setCreating} today={clock.date} />
       <BulkImportDialog open={importing} onOpenChange={setImporting} medications={medications} statuses={statuses} now={now} />
-      <AddSupplyDialog medication={open("supply")} onOpenChange={close} today={clock.date} />
+      <AddSupplyDialog medication={open("supply")} onOpenChange={close} today={clock.date} pauses={pauses} visits={upcoming} />
       <RegimenDialog medication={open("regimen")} onOpenChange={close} today={clock.date} />
       <ReserveDialog medication={open("reserve")} onOpenChange={close} today={clock.date} />
       <DetailDialog

@@ -8,7 +8,10 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
 - **Per medication**: name, brand (optional), dosage/strength, and how it is packed (盒 / 瓶 and
   pills per pack, optional). Every remaining amount is also shown in packs, e.g. `合 6 瓶 14 颗`.
 - **Supply logs**: `+N` pills on any date (whole or 0.5), counted before that day's morning dose;
-  enter a pill count or packs × pills per pack plus loose pills from an opened pack.
+  enter a pill count or packs × pills per pack plus loose pills from an opened pack, or **按日期**:
+  pick the evening it should last to (default: the day before the next visit, with a chip for
+  the Wednesday before it) and it works out exactly how many pills that takes on the regimen,
+  counting what is already there and skipping hospital days.
 - **Stock counts (盘点)**: the pills actually at home at one moment (before 早, or after 早 /
   中 / 晚 of a day). From then on the stock is exactly the counted number, whatever the earlier
   records say; a same-day supply entered after the count is added on top of it, one entered

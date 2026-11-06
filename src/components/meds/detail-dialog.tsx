@@ -218,7 +218,7 @@ export function DetailDialog({
             <Separator />
 
             <div className="grid gap-6 md:grid-cols-2">
-              <SupplyHistory medication={medication} today={now.date} />
+              <SupplyHistory medication={medication} today={now.date} pauses={stays} visits={visits} />
               <RegimenTimeline medication={medication} today={now.date} />
             </div>
           </>

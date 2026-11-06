@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { addDays, fmtDate, type ISODate } from "@/lib/meds/dates";
 import { COUNT_MOMENT_LABEL, fmtQty, formatRegimen, packNote } from "@/lib/meds/format";
-import { regimenAt } from "@/lib/meds/simulate";
+import { regimenAt, type DateRange } from "@/lib/meds/simulate";
 import type { ActionResult, CountRecord, MedicationRecord, SupplyRecord } from "@/lib/meds/types";
 import { RegimenForm, SupplyForm } from "./forms";
 
@@ -89,7 +89,18 @@ function SectionHeader({ title, hint, onAdd, adding }: { title: string; hint: st
 
 type StockEntry = { kind: "supply"; r: SupplyRecord } | { kind: "count"; r: CountRecord };
 
-export function SupplyHistory({ medication, today }: { medication: MedicationRecord; today: ISODate }) {
+export function SupplyHistory({
+  medication,
+  today,
+  pauses,
+  visits,
+}: {
+  medication: MedicationRecord;
+  today: ISODate;
+  pauses: readonly DateRange[];
+  /** Upcoming visit dates. */
+  visits: readonly ISODate[];
+}) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
   // Newest first; on the same day, the later entry first (a count, then what was supplied after it).
@@ -116,6 +127,7 @@ export function SupplyHistory({ medication, today }: { medication: MedicationRec
           <SupplyForm
             today={today}
             pack={medication}
+            plan={{ medication, pauses, visits }}
             submitLabel="添加"
             onSubmit={(f) => addSupply(medication.id, f)}
             onDone={() => setAdding(false)}

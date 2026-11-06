@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { fmtDate, type ISODate } from "@/lib/meds/dates";
 import { describeReserve, fmtPacks, fmtQty, formatRegimen, formatRegimenShort } from "@/lib/meds/format";
-import { regimenAt } from "@/lib/meds/simulate";
+import { regimenAt, type DateRange } from "@/lib/meds/simulate";
 import { PACK_UNITS, type MedicationRecord, type PackUnit } from "@/lib/meds/types";
 import { createMedicationSchema, drawSchema, medicationSchema, reserveSchema } from "@/lib/meds/validation";
 import { cn } from "@/lib/utils";
@@ -160,11 +160,11 @@ export function CreateMedicationDialog({
         >
           <MedicationFieldsInputs values={fields} onChange={onFields} />
           <Separator />
-          <div className="grid gap-4">
+          <div className="@container grid gap-4">
             <p className="text-sm font-medium">
               初始药量与规律 <span className="font-normal text-muted-foreground">（选填）</span>
             </p>
-            <div className="grid items-start gap-4 sm:grid-cols-2">
+            <div className="grid items-start gap-4 @xl:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="init-date">开药 / 生效日期</Label>
                 <DatePicker id="init-date" label="开药 / 生效日期" value={startDate} onChange={setStartDate} today={today} />
@@ -235,10 +235,15 @@ export function AddSupplyDialog({
   medication,
   onOpenChange,
   today,
+  pauses,
+  visits,
 }: {
   medication: MedicationRecord | null;
   onOpenChange: (open: boolean) => void;
   today: ISODate;
+  pauses: readonly DateRange[];
+  /** Upcoming visit dates. */
+  visits: readonly ISODate[];
 }) {
   return (
     <Dialog open={!!medication} onOpenChange={onOpenChange}>
@@ -252,6 +257,7 @@ export function AddSupplyDialog({
             key={medication.id}
             today={today}
             pack={medication}
+            plan={{ medication, pauses, visits }}
             submitLabel="添加"
             onSubmit={(f) => addSupply(medication.id, f)}
             onDone={() => {
@@ -450,7 +456,7 @@ function ReserveDrawForm({ medication, today, onDone }: { medication: Medication
         );
       }}
     >
-      <div className="grid items-start gap-4 sm:grid-cols-2">
+      <div className="grid items-start gap-4">
         <div className="grid gap-2">
           <Label htmlFor={`${uid}-date`}>取用日期</Label>
           <DatePicker id={`${uid}-date`} label="取用日期" value={date} onChange={setDate} today={today} />

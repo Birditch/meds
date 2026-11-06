@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { fmtQty } from "@/lib/meds/format";
@@ -17,6 +18,7 @@ export function SupplyAmountInput({
   value,
   onChange,
   unit = "盒",
+  byDate,
 }: {
   id: string;
   label: string;
@@ -24,11 +26,15 @@ export function SupplyAmountInput({
   onChange: (value: AmountState) => void;
   /** The medication's pack: 盒 or 瓶. */
   unit?: string;
+  /** A third way in: the amount worked out from a date, shown in place of the inputs. */
+  byDate?: { active: boolean; onChange: (active: boolean) => void; children: ReactNode };
 }) {
   const resolved = resolveAmount(value, unit);
   const total = "value" in resolved ? resolved.value : null;
+  const dateMode = !!byDate?.active;
 
   const switchTo = (mode: AmountState["mode"]) => {
+    byDate?.onChange(false);
     if (mode === value.mode) return;
     // Going back to pills carries the computed total over.
     if (mode === "pills" && total !== null) onChange({ ...value, mode, pills: String(total) });
@@ -38,7 +44,7 @@ export function SupplyAmountInput({
   return (
     <div className="grid gap-2">
       <div className="flex items-center justify-between gap-2">
-        <Label htmlFor={value.mode === "pills" ? id : `${id}-boxes`}>{label}</Label>
+        <Label htmlFor={dateMode ? undefined : value.mode === "pills" ? id : `${id}-boxes`}>{label}</Label>
         <div role="radiogroup" aria-label={`${label}录入方式`} className="inline-flex rounded-md border p-0.5 text-xs">
           {(
             [
@@ -50,65 +56,79 @@ export function SupplyAmountInput({
               key={mode}
               type="button"
               role="radio"
-              aria-checked={value.mode === mode}
+              aria-checked={!dateMode && value.mode === mode}
               onClick={() => switchTo(mode)}
               className={cn(
                 "rounded-[5px] px-2 py-0.5 transition-colors",
-                value.mode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                !dateMode && value.mode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
               )}
             >
               {text}
             </button>
           ))}
+          {byDate && (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={dateMode}
+              onClick={() => byDate.onChange(true)}
+              className={cn(
+                "rounded-[5px] px-2 py-0.5 transition-colors",
+                dateMode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              按日期
+            </button>
+          )}
         </div>
       </div>
 
-      {value.mode === "pills" ? (
+      {dateMode ? (
+        byDate!.children
+      ) : value.mode === "pills" ? (
         <QuantityInput id={id} label={label} value={value.pills} onChange={(pills) => onChange({ ...value, pills })} step={1} />
       ) : (
-        <div className="flex items-center gap-1.5 text-sm">
-          <Input
-            id={`${id}-boxes`}
-            aria-label={`${unit}数`}
-            inputMode="numeric"
-            placeholder={`${unit}数`}
-            className="text-center tabular-nums"
-            value={value.boxes}
-            onChange={(e) => onChange({ ...value, boxes: e.target.value.replace(/\D/g, "") })}
-          />
-          <span className="shrink-0 text-muted-foreground">{unit} ×</span>
-          <Input
-            id={`${id}-per-box`}
-            aria-label={`每${unit}颗数`}
-            inputMode="decimal"
-            placeholder={`每${unit}`}
-            className="text-center tabular-nums"
-            value={value.perBox}
-            onChange={(e) => onChange({ ...value, perBox: digits(e.target.value) })}
-          />
-          <span className="shrink-0 text-muted-foreground">颗/{unit}</span>
+        <div className="grid gap-2">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-2 text-sm">
+            <Input
+              id={`${id}-boxes`}
+              aria-label={`${unit}数`}
+              inputMode="numeric"
+              placeholder={`${unit}数`}
+              className="w-20 text-center tabular-nums"
+              value={value.boxes}
+              onChange={(e) => onChange({ ...value, boxes: e.target.value.replace(/\D/g, "") })}
+            />
+            <span className="text-muted-foreground">{unit} ×</span>
+            <Input
+              id={`${id}-per-box`}
+              aria-label={`每${unit}颗数`}
+              inputMode="decimal"
+              placeholder={`每${unit}`}
+              className="w-20 text-center tabular-nums"
+              value={value.perBox}
+              onChange={(e) => onChange({ ...value, perBox: digits(e.target.value) })}
+            />
+            <span className="text-muted-foreground">颗/{unit}</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-sm">
+            <span className="text-muted-foreground">另有散装</span>
+            <Input
+              id={`${id}-loose`}
+              aria-label={`散装颗数（已拆开的那${unit}剩下的）`}
+              inputMode="decimal"
+              placeholder="无"
+              className="w-20 text-center tabular-nums"
+              value={value.loose}
+              onChange={(e) => onChange({ ...value, loose: digits(e.target.value) })}
+            />
+            <span className="text-muted-foreground">颗</span>
+          </div>
+          <p className="text-xs text-muted-foreground tabular-nums" aria-live="polite">
+            {total !== null ? `共 ${fmtQty(total)} 颗` : value.perBox.trim() ? `填写${unit}数` : `填写${unit}数和每${unit}颗数`}
+            。散装是已拆开、用过一部分的那{unit}剩下的颗数，没有就空着。
+          </p>
         </div>
-      )}
-      {value.mode === "boxes" && (
-        <div className="flex items-center gap-1.5 text-sm">
-          <span className="shrink-0 text-muted-foreground">另有散装</span>
-          <Input
-            id={`${id}-loose`}
-            aria-label={`散装颗数（已拆开的那${unit}剩下的）`}
-            inputMode="decimal"
-            placeholder="0"
-            className="w-20 text-center tabular-nums"
-            value={value.loose}
-            onChange={(e) => onChange({ ...value, loose: digits(e.target.value) })}
-          />
-          <span className="text-muted-foreground">颗</span>
-          <span className="text-xs text-muted-foreground">（已拆开、用过一部分的那{unit}剩下的）</span>
-        </div>
-      )}
-      {value.mode === "boxes" && (
-        <p className="text-xs text-muted-foreground tabular-nums" aria-live="polite">
-          {total !== null ? `共 ${fmtQty(total)} 颗` : `填写${unit}数和每${unit}颗数`}
-        </p>
       )}
     </div>
   );

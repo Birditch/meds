@@ -21,6 +21,7 @@ import {
   nextShortfall,
   regimenAt,
   simulate,
+  supplyToLast,
   type RegimenInput,
   type SupplyInput,
 } from "./simulate";
@@ -406,5 +407,33 @@ describe("stock counts", () => {
     expect(balanceAt(sim, momentAt("2026-11-06", 20 * 60))).toBe(10);
     // 10 pills at 2 a day: 11-07..11-11.
     expect(sim.outcome).toMatchObject({ kind: "depleted", lastFull: { date: "2026-11-11", slot: "evening" } });
+  });
+});
+
+describe("supplyToLast", () => {
+  const regimens = [reg("2026-11-01", 1, 0, 1)];
+
+  it("gives exactly the pills to last through the evening of the chosen day", () => {
+    // Empty stock: 11-07 早 through 12-02 晚 is 26 days × 2.
+    expect(supplyToLast([], regimens, { date: "2026-11-07" }, "2026-12-02")).toBe(52);
+    // 10 already there: 42 more.
+    expect(supplyToLast([sup("2026-11-07", 10)], regimens, { date: "2026-11-07" }, "2026-12-02")).toBe(42);
+    // Already enough: nothing.
+    expect(supplyToLast([sup("2026-11-01", 200)], regimens, { date: "2026-11-07" }, "2026-12-02")).toBe(0);
+  });
+
+  it("skips hospital days and works in half pills", () => {
+    const stays = [{ start: "2026-11-10", end: "2026-11-12" }];
+    // 11-07..11-16 is 10 days, 3 of them in hospital: 7 × 2.
+    expect(supplyToLast([], regimens, { date: "2026-11-07" }, "2026-11-16", { pauses: stays })).toBe(14);
+    expect(supplyToLast([], [reg("2026-11-01", 0.5, 0, 0)], { date: "2026-11-07" }, "2026-11-09")).toBe(1.5);
+  });
+
+  it("starts at a same-day count when entered after it, and gives up across a later count", () => {
+    const counts = [{ date: "2026-11-07", slotsDone: 1 as const, quantity: 0, recordedAt: 5 }];
+    // After the count (早 done, 0 left): 11-07 晚 + 11-08 早晚 = 3.
+    expect(supplyToLast([], regimens, { date: "2026-11-07", recordedAt: 9 }, "2026-11-08", { counts })).toBe(3);
+    const later = [{ date: "2026-11-09", slotsDone: 0 as const, quantity: 0 }];
+    expect(supplyToLast([], regimens, { date: "2026-11-07" }, "2026-11-10", { counts: later })).toBeNull();
   });
 });
