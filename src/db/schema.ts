@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, date, index, integer, numeric, pgTable, text, unique } from "drizzle-orm/pg-core";
+import { check, date, index, integer, numeric, pgTable, smallint, text, timestamp, unique } from "drizzle-orm/pg-core";
 
 /** Quantities are 0.5-pill granular: q * 2 must be a whole number. */
 const halfStep = (column: string) => sql.raw(`${column} * 2 = trunc(${column} * 2)`);
@@ -36,11 +36,39 @@ export const supplyLogs = pgTable(
       .references(() => medications.id, { onDelete: "cascade" }),
     date: date({ mode: "string" }).notNull(),
     quantity: numeric({ precision: 10, scale: 1, mode: "number" }).notNull(),
+    /** When the entry was made: orders it against a stock count on the same day. */
+    createdAt: timestamp({ withTimezone: true, mode: "date" }).notNull().defaultNow(),
   },
   (t) => [
     index("supply_logs_medication_date_idx").on(t.medicationId, t.date),
     check("supply_logs_quantity_positive", sql`${t.quantity} > 0`),
     check("supply_logs_quantity_half_step", halfStep("quantity")),
+  ],
+);
+
+/**
+ * A stock count: the pills actually at home at one moment of a day, after `slotsDone` (0–3)
+ * of that day's doses. From then on the stock is that number, whatever the records before it
+ * say. Supplies of the same day entered after the count come on top of it.
+ */
+export const stockCounts = pgTable(
+  "stock_counts",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    medicationId: integer()
+      .notNull()
+      .references(() => medications.id, { onDelete: "cascade" }),
+    date: date({ mode: "string" }).notNull(),
+    slotsDone: smallint().notNull(),
+    quantity: numeric({ precision: 10, scale: 1, mode: "number" }).notNull(),
+    createdAt: timestamp({ withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One count per medication per day: counting again that day replaces it.
+    unique("stock_counts_medication_date_key").on(t.medicationId, t.date),
+    check("stock_counts_slots_done", sql`${t.slotsDone} between 0 and 3`),
+    check("stock_counts_quantity_non_negative", sql`${t.quantity} >= 0`),
+    check("stock_counts_quantity_half_step", halfStep("quantity")),
   ],
 );
 

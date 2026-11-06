@@ -71,9 +71,49 @@ export const drawSchema = z.object({ date: dateSchema, quantity: quantitySchema 
 
 export const idSchema = z.number().int().positive();
 
+const slotsDoneSchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)], { error: "清点时间无效" });
+const dosesSchema = z.object({ morning: doseSchema, noon: doseSchema, evening: doseSchema });
+const countedSchema = reserveSchema.nullable();
+
+/**
+ * One-click import. `stock` / `reserve` null = leave unchanged; `regimen` null = keep the
+ * current one. Stock is counted at `at`: after `slotsDone` of that day's doses.
+ */
+export const importSchema = z
+  .object({
+    at: z.object({ date: dateSchema, slotsDone: slotsDoneSchema }),
+    rows: z
+      .array(
+        z.discriminatedUnion("kind", [
+          z.object({
+            kind: z.literal("existing"),
+            id: idSchema,
+            packUnit: z.enum(PACK_UNITS),
+            perBox: perBoxSchema,
+            stock: countedSchema,
+            reserve: countedSchema,
+            regimen: dosesSchema.nullable(),
+          }),
+          medicationSchema.extend({
+            kind: z.literal("new"),
+            stock: countedSchema,
+            reserve: countedSchema,
+            regimen: dosesSchema.nullable(),
+          }),
+        ]),
+      )
+      .min(1, "没有要录入的内容")
+      .max(300, "一次最多录入 300 种药"),
+  })
+  .refine((v) => {
+    const ids = v.rows.flatMap((r) => (r.kind === "existing" ? [r.id] : []));
+    return new Set(ids).size === ids.length;
+  }, "同一种药出现了两次");
+
 export type MedicationFields = z.input<typeof medicationSchema>;
 export type SupplyFields = z.infer<typeof supplySchema>;
 export type RegimenFields = z.infer<typeof regimenSchema>;
 export type StayFields = z.infer<typeof staySchema>;
 export type DrawFields = z.infer<typeof drawSchema>;
 export type CreateMedicationFields = z.input<typeof createMedicationSchema>;
+export type ImportFields = z.input<typeof importSchema>;

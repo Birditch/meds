@@ -9,6 +9,21 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   pills per pack, optional). Every remaining amount is also shown in packs, e.g. `合 6 瓶 14 颗`.
 - **Supply logs**: `+N` pills on any date (whole or 0.5), counted before that day's morning dose;
   enter a pill count or packs × pills per pack plus loose pills from an opened pack.
+- **Stock counts (盘点)**: the pills actually at home at one moment (before 早, or after 早 /
+  中 / 晚 of a day). From then on the stock is exactly the counted number, whatever the earlier
+  records say; a same-day supply entered after the count is added on top of it, one entered
+  before it is already in it. One count per medication per day (counting again replaces it).
+- **One-click import (一键录入)**: paste a list, one medication per line, or fill the table, and
+  record the stock of every medication at once (as counts), plus reserves, pills per pack,
+  regimen changes and new medications, in one transaction. Lines are free text, e.g.
+  `他克莫司胶囊，普乐可复，1mg，每盒50颗，余 3盒12颗，储备 2盒，早1 晚1` or
+  `阿托伐他汀钙片（立普妥） 20mg 7片×2板 剩 20 片`; amounts are stock unless a reserve word
+  (储备 / 备用) comes first, and a bare number is read only right after 余 / 剩 / 储备. Lines
+  match existing medications by name, brand or pinyin (narrowed by dosage; another dosage is a
+  new medication). "填入当前清单" writes the current list in that format to edit and paste back.
+  A stock equal to the projection records nothing; a new medication's stock becomes a supply that
+  day (plus the doses already taken by then). Medications without pills per pack are tagged
+  **未写明每盒颗数** on the board, filterable, and in the import table.
 - **Regimen timeline**: morning / noon / evening doses, each with an `effectiveFrom` date.
   A regimen never applies before its date; setting one again for the same date overwrites it.
 - **Reserve (药物储备)**: extra pills kept at home, outside the stock and the projection. The app
@@ -42,13 +57,15 @@ Recharts · Drizzle ORM · PostgreSQL.
 (`/api/medications`, the first render) and the browser (live recompute). Starting at the
 earliest record with `balance = 0`, for each day `d`:
 
-1. **Supply** — add every `+N` logged on `d`.
+1. **Supply** — add every `+N` logged on `d` (one entered after that day's count waits for it).
 2. **Regimen** — the latest regimen with `effectiveFrom <= d` (none yet → doses are 0). On a
    hospital-stay day every dose is 0.
 3. **Doses, 早 → 中 → 晚** — a slot with dose `0` is skipped; if `balance >= dose` it is taken in
    full; if `0 < balance < dose` the remainder is taken as a partial dose and `balance` becomes 0;
    if `balance == 0` the slot is missed. Stock never goes negative, and a later refill resumes it.
-4. **Snapshot** — end-of-day balance, each slot's outcome, refill / regimen-change events.
+   A **count** replaces `balance` once its number of slots is behind (0 = before 早), then adds
+   the same-day supplies entered after it.
+4. **Snapshot** — end-of-day balance, each slot's outcome, refill / regimen-change / count events.
 
 Once every record, today and the end of the visit plan are behind it, the simulation stops when
 the regimen in force is all zeros (**stopped**, stock kept) or when stock hits 0 (**depleted**),
@@ -99,7 +116,8 @@ add `-v` only if you mean to wipe it).
 | `MEDS_ACCESS_DISABLED=1` | skip the Access check (local only). In production, missing Access settings fail closed with 503 |
 | `MEDS_MIGRATE_ON_START=0` | don't apply migrations at boot |
 
-`GET /api/medications` returns all data (medications, visits, hospital stays) with the
+`GET /api/medications` returns all data (medications with their supplies, counts and regimens,
+visits, hospital stays) with the
 server-side projection, visit plan and reserve estimate (`?today=YYYY-MM-DD&minutes=N` to
 evaluate another moment). `GET /api/health` checks the database.
 

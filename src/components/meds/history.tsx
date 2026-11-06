@@ -3,7 +3,7 @@
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { addSupply, deleteRegimen, deleteSupply, saveRegimen, updateRegimen, updateSupply } from "@/app/actions";
+import { addSupply, deleteCount, deleteRegimen, deleteSupply, saveRegimen, updateRegimen, updateSupply } from "@/app/actions";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,9 +18,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { addDays, fmtDate, type ISODate } from "@/lib/meds/dates";
-import { fmtQty, formatRegimen } from "@/lib/meds/format";
+import { COUNT_MOMENT_LABEL, fmtQty, formatRegimen, packNote } from "@/lib/meds/format";
 import { regimenAt } from "@/lib/meds/simulate";
-import type { ActionResult, MedicationRecord } from "@/lib/meds/types";
+import type { ActionResult, CountRecord, MedicationRecord, SupplyRecord } from "@/lib/meds/types";
 import { RegimenForm, SupplyForm } from "./forms";
 
 export function ConfirmDelete({
@@ -87,17 +87,24 @@ function SectionHeader({ title, hint, onAdd, adding }: { title: string; hint: st
 
 /* ---------------------------------- supply logs ---------------------------------- */
 
+type StockEntry = { kind: "supply"; r: SupplyRecord } | { kind: "count"; r: CountRecord };
+
 export function SupplyHistory({ medication, today }: { medication: MedicationRecord; today: ISODate }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
-  const rows = [...medication.supplies].sort((a, b) => (a.date === b.date ? b.id - a.id : a.date < b.date ? 1 : -1));
-  const total = rows.reduce((sum, r) => sum + r.quantity, 0);
+  // Newest first; on the same day, the later entry first (a count, then what was supplied after it).
+  const rows: StockEntry[] = [
+    ...medication.supplies.map((r) => ({ kind: "supply" as const, r })),
+    ...medication.counts.map((r) => ({ kind: "count" as const, r })),
+  ].sort((a, b) => (a.r.date === b.r.date ? b.r.recordedAt - a.r.recordedAt || b.r.id - a.r.id : a.r.date < b.r.date ? 1 : -1));
+  const total = medication.supplies.reduce((sum, r) => sum + r.quantity, 0);
+  const counts = medication.counts.length;
 
   return (
     <section className="grid content-start gap-3">
       <SectionHeader
-        title="开药 / 补药记录"
-        hint={`共 ${rows.length} 次，累计 ${fmtQty(total)} 颗`}
+        title={counts ? "补药与盘点记录" : "开药 / 补药记录"}
+        hint={`补药 ${medication.supplies.length} 次，累计 ${fmtQty(total)} 颗${counts ? ` · 盘点 ${counts} 次` : ""}`}
         adding={adding}
         onAdd={() => {
           setAdding((v) => !v);
@@ -118,8 +125,10 @@ export function SupplyHistory({ medication, today }: { medication: MedicationRec
       )}
       {rows.length === 0 && !adding && <p className="py-6 text-center text-sm text-muted-foreground">还没有补药记录</p>}
       <ul className="divide-y rounded-lg border">
-        {rows.map((r) =>
-          editing === r.id ? (
+        {rows.map(({ kind, r }) =>
+          kind === "count" ? (
+            <CountRow key={`count-${r.id}`} count={r} medication={medication} />
+          ) : editing === r.id ? (
             <li key={r.id} className="bg-muted/30 p-3">
               <SupplyForm
                 today={today}
@@ -159,6 +168,29 @@ export function SupplyHistory({ medication, today }: { medication: MedicationRec
         )}
       </ul>
     </section>
+  );
+}
+
+function CountRow({ count, medication }: { count: CountRecord; medication: MedicationRecord }) {
+  const note = packNote(count.quantity, medication);
+  return (
+    <li className="flex items-center gap-3 px-3 py-2">
+      <span className="tabular-nums">{fmtDate(count.date)}</span>
+      <Badge variant="secondary">盘点</Badge>
+      <span className="text-xs text-muted-foreground">{COUNT_MOMENT_LABEL[count.slotsDone]}</span>
+      <span className="ml-auto grid justify-items-end tabular-nums">
+        <span className="font-medium">剩 {fmtQty(count.quantity)} 颗</span>
+        {note && <span className="text-xs text-muted-foreground">{note}</span>}
+      </span>
+      <div className="flex">
+        <span className="size-8" aria-hidden />
+        <ConfirmDelete
+          title="删除这条盘点？"
+          description={`${fmtDate(count.date)} ${COUNT_MOMENT_LABEL[count.slotsDone]}剩 ${fmtQty(count.quantity)} 颗。删除后这天起的余量改回按补药记录和服用规律推算。`}
+          onConfirm={() => deleteCount(count.id)}
+        />
+      </div>
+    </li>
   );
 }
 

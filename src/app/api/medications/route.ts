@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   const pauses = stays.map((s) => ({ start: s.startDate, end: s.endDate }));
   const medications = records.map(({ searchKeys, ...m }) => {
     void searchKeys; // a client-side search aid, not data
-    const s = medicationStatus(m.supplies, m.regimens, now, schedule, { pauses, perBox: m.perBox });
+    const s = medicationStatus(m.supplies, m.regimens, now, schedule, { pauses, perBox: m.perBox, counts: m.counts });
     return {
       ...m,
       projection: {

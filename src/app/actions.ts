@@ -1,19 +1,21 @@
 "use server";
 
-import { and, eq, gte, ne, sql } from "drizzle-orm";
+import { and, eq, gte, lte, ne, sql } from "drizzle-orm";
 import { refresh } from "next/cache";
 import { headers } from "next/headers";
 import type { z } from "zod";
 import { getDb } from "@/db";
-import { dosageRegimens, hospitalStays, medications, supplyLogs, visits } from "@/db/schema";
+import { dosageRegimens, hospitalStays, medications, stockCounts, supplyLogs, visits } from "@/db/schema";
 import { checkAccess } from "@/lib/access";
-import { fmtDate } from "@/lib/meds/dates";
+import { fmtDate, wallClock } from "@/lib/meds/dates";
+import { momentAt } from "@/lib/meds/simulate";
 import type { ActionResult } from "@/lib/meds/types";
 import {
   createMedicationSchema,
   dateSchema,
   drawSchema,
   idSchema,
+  importSchema,
   medicationSchema,
   regimenSchema,
   reserveSchema,
@@ -21,6 +23,7 @@ import {
   supplySchema,
   type CreateMedicationFields,
   type DrawFields,
+  type ImportFields,
   type MedicationFields,
   type RegimenFields,
   type StayFields,
@@ -143,6 +146,82 @@ export async function updateSupply(id: number, input: SupplyFields): Promise<Act
 export async function deleteSupply(id: number): Promise<ActionResult> {
   return run(async () => {
     await getDb().delete(supplyLogs).where(eq(supplyLogs.id, parse(idSchema, id)));
+  });
+}
+
+/* ---------------------------------- stock counts ---------------------------------- */
+
+export async function deleteCount(id: number): Promise<ActionResult> {
+  return run(async () => {
+    await getDb().delete(stockCounts).where(eq(stockCounts.id, parse(idSchema, id)));
+  });
+}
+
+/**
+ * One-click import, all or nothing: stock counts, reserves, pack sizes and regimens of
+ * existing medications, plus new medications.
+ *
+ * Existing stock is recorded as a count at `at`, so from then on it is exactly what was
+ * counted. A new medication has no history to count against: its stock becomes a supply that
+ * day, plus the doses already taken by then, so that after them exactly the counted pills remain.
+ */
+export async function importStock(input: ImportFields): Promise<ActionResult> {
+  return run(async () => {
+    const { at, rows } = parse(importSchema, input);
+    const clock = wallClock();
+    const now = momentAt(clock.date, clock.minutes);
+    if (at.date > now.date || (at.date === now.date && at.slotsDone > now.slotsDone)) {
+      throw new UserError("清点时间不能晚于现在");
+    }
+
+    await getDb().transaction(async (tx) => {
+      const inHospital =
+        (
+          await tx
+            .select({ id: hospitalStays.id })
+            .from(hospitalStays)
+            .where(and(lte(hospitalStays.startDate, at.date), gte(hospitalStays.endDate, at.date)))
+        ).length > 0;
+      const setRegimen = (medicationId: number, d: { morning: number; noon: number; evening: number }) =>
+        tx
+          .insert(dosageRegimens)
+          .values({ medicationId, effectiveFrom: at.date, ...d })
+          .onConflictDoUpdate({ target: [dosageRegimens.medicationId, dosageRegimens.effectiveFrom], set: d });
+
+      for (const row of rows) {
+        if (row.kind === "existing") {
+          const updated = await tx
+            .update(medications)
+            .set({ packUnit: row.packUnit, perBox: row.perBox, ...(row.reserve !== null ? { reserve: row.reserve } : {}) })
+            .where(eq(medications.id, row.id))
+            .returning({ id: medications.id });
+          if (updated.length === 0) throw new UserError("有药品已被删除，请刷新后重新录入");
+          if (row.regimen) await setRegimen(row.id, row.regimen);
+          if (row.stock !== null) {
+            await tx
+              .insert(stockCounts)
+              .values({ medicationId: row.id, date: at.date, slotsDone: at.slotsDone, quantity: row.stock })
+              .onConflictDoUpdate({
+                target: [stockCounts.medicationId, stockCounts.date],
+                set: { slotsDone: at.slotsDone, quantity: row.stock, createdAt: sql`now()` },
+              });
+          }
+        } else {
+          const { stock, reserve, regimen, name, brand, dosage, packUnit, perBox } = row;
+          const [med] = await tx
+            .insert(medications)
+            .values({ name, brand, dosage, packUnit, perBox, reserve: reserve ?? 0 })
+            .returning({ id: medications.id });
+          if (regimen) await setRegimen(med.id, regimen);
+          if (stock !== null) {
+            const doses = regimen && !inHospital ? [regimen.morning, regimen.noon, regimen.evening] : [];
+            const takenBefore = doses.slice(0, at.slotsDone).reduce((a, b) => a + b, 0);
+            const quantity = stock + takenBefore;
+            if (quantity > 0) await tx.insert(supplyLogs).values({ medicationId: med.id, date: at.date, quantity });
+          }
+        }
+      }
+    });
   });
 }
 

@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Separator } from "@/components/ui/separator";
 import { addDays, fmtDate, weekdayCN, type ISODate } from "@/lib/meds/dates";
 import {
+  COUNT_MOMENT_LABEL,
   describeReserve,
   describeShortfall,
   fmtQty,
@@ -54,6 +55,7 @@ export function DetailDialog({
 }) {
   const [panel, setPanel] = useState<"edit" | "reserve" | null>(null);
   const toggle = (p: "edit" | "reserve") => setPanel((v) => (v === p ? null : p));
+  const lastCount = medication?.counts.filter((c) => c.date <= now.date).at(-1) ?? null;
 
   return (
     <Dialog
@@ -110,6 +112,11 @@ export function DetailDialog({
                   <>
                     {packNote(status.balanceNow, medication) && <div>{packNote(status.balanceNow, medication)}</div>}
                     {fmtDate(now.date)} · {momentLabel[now.slotsDone]}
+                    {lastCount && (
+                      <div>
+                        按 {fmtDate(lastCount.date)} {COUNT_MOMENT_LABEL[lastCount.slotsDone]}盘点的 {fmtQty(lastCount.quantity)} 颗推算
+                      </div>
+                    )}
                   </>
                 }
               >

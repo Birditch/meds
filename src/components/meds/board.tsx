@@ -1,7 +1,8 @@
 "use client";
 
-import { ChartSplineIcon, PillIcon, PlusIcon, SearchIcon, SettingsIcon, TriangleAlertIcon } from "lucide-react";
+import { ChartSplineIcon, ClipboardListIcon, PillIcon, PlusIcon, SearchIcon, SettingsIcon, TagIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -18,7 +19,9 @@ import {
 } from "@/lib/meds/format";
 import { searchMedications } from "@/lib/meds/search";
 import type { MedicationRecord, StayRecord, VisitRecord } from "@/lib/meds/types";
+import { cn } from "@/lib/utils";
 import { scheduleVisits } from "@/lib/meds/visits";
+import { BulkImportDialog } from "./bulk-import";
 import { DetailDialog } from "./detail-dialog";
 import { AddSupplyDialog, CreateMedicationDialog, RegimenDialog, ReserveDialog } from "./medication-dialogs";
 import { StatusBadge, toneText } from "./status-badge";
@@ -42,8 +45,10 @@ export function Board({
   const { date, slotsDone } = clock.moment;
   const now = useMemo(() => ({ date, slotsDone }), [date, slotsDone]);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
   const [query, setQuery] = useState("");
+  const [onlyNoPerBox, setOnlyNoPerBox] = useState(false);
 
   const schedule = useMemo(() => scheduleVisits(visits, date), [visits, date]);
   const pauses = useMemo(() => stays.map((s) => ({ start: s.startDate, end: s.endDate })), [stays]);
@@ -51,11 +56,16 @@ export function Board({
   const statuses = useMemo(
     () =>
       new Map(
-        medications.map((m) => [m.id, medicationStatus(m.supplies, m.regimens, now, schedule, { pauses, perBox: m.perBox })]),
+        medications.map((m) => [m.id, medicationStatus(m.supplies, m.regimens, now, schedule, { pauses, perBox: m.perBox, counts: m.counts })]),
       ),
     [medications, now, schedule, pauses],
   );
-  const shown = useMemo(() => searchMedications(medications, query), [medications, query]);
+  const noPerBox = medications.filter((m) => !m.perBox).length;
+  const filterNoPerBox = onlyNoPerBox && noPerBox > 0;
+  const shown = useMemo(
+    () => searchMedications(filterNoPerBox ? medications.filter((m) => !m.perBox) : medications, query),
+    [medications, query, filterNoPerBox],
+  );
 
   const open = (kind: NonNullable<Panel>["kind"]) => (panel?.kind === kind ? medications.find((m) => m.id === panel.id) ?? null : null);
   const close = (o: boolean) => !o && setPanel(null);
@@ -81,6 +91,10 @@ export function Board({
               />
             </div>
           )}
+          <Button variant="outline" onClick={() => setImporting(true)}>
+            <ClipboardListIcon />
+            一键录入
+          </Button>
           <Button onClick={() => setCreating(true)}>
             <PlusIcon />
             新增药品
@@ -88,20 +102,55 @@ export function Board({
         </div>
       </div>
 
+      {noPerBox > 0 && (
+        <div className="-mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <button
+            type="button"
+            aria-pressed={filterNoPerBox}
+            onClick={() => setOnlyNoPerBox((v) => !v)}
+            className={cn(
+              "inline-flex h-6 items-center gap-1 rounded-full border px-2.5 transition-colors",
+              filterNoPerBox ? noPerBoxTag : "hover:bg-muted",
+            )}
+          >
+            <TagIcon className="size-3" />
+            未写明每盒颗数 {noPerBox} 种
+            {filterNoPerBox && <XIcon className="size-3" />}
+          </button>
+          <span>这些药没法换算成盒数，就诊时只能按颗开；可在“一键录入”里补上。</span>
+        </div>
+      )}
+
       {medications.length === 0 ? (
         <div className="grid place-items-center gap-3 rounded-xl border border-dashed py-20 text-center">
           <PillIcon className="size-8 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">还没有药品。添加第一种药，开始推算余量和吃完时间。</p>
-          <Button variant="outline" onClick={() => setCreating(true)}>
-            <PlusIcon />
-            新增药品
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setImporting(true)}>
+              <ClipboardListIcon />
+              一键录入清单
+            </Button>
+            <Button variant="outline" onClick={() => setCreating(true)}>
+              <PlusIcon />
+              新增药品
+            </Button>
+          </div>
         </div>
       ) : shown.length === 0 ? (
         <div className="grid place-items-center gap-3 rounded-xl border border-dashed py-12 text-center">
-          <p className="text-sm text-muted-foreground">没有和“{query.trim()}”匹配的药品</p>
-          <Button variant="outline" size="sm" onClick={() => setQuery("")}>
-            清除搜索
+          <p className="text-sm text-muted-foreground">
+            {query.trim() ? `没有和“${query.trim()}”匹配的药品` : "没有符合筛选的药品"}
+            {filterNoPerBox && "（只看未写明每盒颗数的）"}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setQuery("");
+              setOnlyNoPerBox(false);
+            }}
+          >
+            清除搜索和筛选
           </Button>
         </div>
       ) : (
@@ -126,6 +175,7 @@ export function Board({
       </div>
 
       <CreateMedicationDialog open={creating} onOpenChange={setCreating} today={clock.date} />
+      <BulkImportDialog open={importing} onOpenChange={setImporting} medications={medications} statuses={statuses} now={now} />
       <AddSupplyDialog medication={open("supply")} onOpenChange={close} today={clock.date} />
       <RegimenDialog medication={open("regimen")} onOpenChange={close} today={clock.date} />
       <ReserveDialog medication={open("reserve")} onOpenChange={close} today={clock.date} />
@@ -140,6 +190,9 @@ export function Board({
     </>
   );
 }
+
+const noPerBoxTag =
+  "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300";
 
 function Row({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -172,7 +225,15 @@ function MedicationCard({
   return (
     <Card className="gap-4">
       <CardHeader>
-        <CardTitle className="text-lg">{medication.name}</CardTitle>
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle className="text-lg">{medication.name}</CardTitle>
+          {!medication.perBox && (
+            <Badge variant="outline" className={noPerBoxTag} title="没有每盒颗数：就诊时只能按颗算，无法换算成盒数">
+              <TagIcon />
+              未写明每{medication.packUnit}颗数
+            </Badge>
+          )}
+        </div>
         <CardDescription>
           {[medication.brand, medication.dosage, medication.perBox && `${fmtQty(medication.perBox)} 颗/${medication.packUnit}`]
             .filter(Boolean)

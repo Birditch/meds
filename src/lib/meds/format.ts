@@ -9,6 +9,7 @@ import {
   nextShortfall,
   regimenAt,
   simulate,
+  type CountInput,
   type DateRange,
   type DaySnapshot,
   type Dose,
@@ -20,6 +21,9 @@ import {
   type SupplyInput,
 } from "./simulate";
 import { planHorizon, planVisits, type VisitPlan, type VisitSchedule } from "./visits";
+
+/** When a stock count was taken, by how many of the day's doses were behind it. */
+export const COUNT_MOMENT_LABEL = ["早上服药前", "早上服药后", "中午服药后", "晚上服药后"] as const;
 
 /** 100 → "100", 1.5 → "1.5" */
 export const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
@@ -180,6 +184,8 @@ export interface StatusOptions {
   pauses?: readonly DateRange[];
   /** Pills per box, so visits get whole boxes. */
   perBox?: number | null;
+  /** Stock counts: the stock is what was counted, from that moment on. */
+  counts?: readonly CountInput[];
 }
 
 export function medicationStatus<R extends RegimenInput>(
@@ -187,9 +193,9 @@ export function medicationStatus<R extends RegimenInput>(
   regimens: readonly R[],
   now: Moment,
   schedule: readonly VisitSchedule[] = [],
-  { pauses = [], perBox = null }: StatusOptions = {},
+  { pauses = [], perBox = null, counts = [] }: StatusOptions = {},
 ): MedicationStatus<R> {
-  const sim = simulate(supplies, regimens, { today: now.date, until: planHorizon(schedule), pauses });
+  const sim = simulate(supplies, regimens, { today: now.date, until: planHorizon(schedule), pauses, counts });
   return {
     sim,
     current: regimenAt(regimens, now.date),

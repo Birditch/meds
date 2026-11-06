@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { amountInPacks, amountState, resolveAmount } from "./amount";
 import { wallClock } from "./dates";
-import { conclude, describeReserve, describeShortfall, fmtPacks, fmtQty, formatRegimen, packNote, reserveEstimate } from "./format";
+import {
+  conclude,
+  describeReserve,
+  describeShortfall,
+  fmtPacks,
+  fmtQty,
+  formatRegimen,
+  medicationStatus,
+  packNote,
+  reserveEstimate,
+} from "./format";
 import {
   balanceAt,
   dosesLeft,
@@ -317,5 +327,84 @@ describe("hospital stays", () => {
     expect(day(sim, "2026-11-19")).toMatchObject({ paused: true, endOfDayBalance: 42 });
     expect(day(sim, "2026-11-20")).toMatchObject({ paused: false, endOfDayBalance: 40 });
     expect(conclude(sim, momentAt("2026-11-06", 0)).headline).toBe("能吃到：2026.12.10 周四");
+  });
+});
+
+describe("stock counts", () => {
+  const count = (date: string, slotsDone: 0 | 1 | 2 | 3, quantity: number, recordedAt?: number) => ({
+    date,
+    slotsDone,
+    quantity,
+    recordedAt,
+  });
+
+  it("replaces the stock at the counted moment, whatever the records say", () => {
+    const supplies = [sup("2026-11-01", 100)];
+    const regimens = [reg("2026-11-01", 1, 0, 1)];
+    // 11-01..11-05 eat 10 → 90; 11-06 早 → 89, then the count says 50; 晚 → 49.
+    const sim = simulate(supplies, regimens, { counts: [count("2026-11-06", 1, 50)] });
+    const d = day(sim, "2026-11-06");
+    expect(d.count).toEqual({ slotsDone: 1, before: 89, quantity: 50, late: 0 });
+    expect(d.slots.map((s) => s.after)).toEqual([50, 50, 49]);
+    expect(d.endOfDayBalance).toBe(49);
+    expect(balanceAt(sim, momentAt("2026-11-06", 9 * 60))).toBe(50);
+    // 49 from 11-07: 24 full days (11-07..11-30) eat 48, 12-01 gets only 早.
+    expect(conclude(sim, momentAt("2026-11-06", 20 * 60))).toMatchObject({
+      headline: "能吃到：2026.11.30 周一",
+      extraNote: "额外多 1 颗：够 2026.12.01 周二 早",
+    });
+    const status = medicationStatus(supplies, regimens, momentAt("2026-11-06", 9 * 60), [], {
+      counts: [count("2026-11-06", 1, 50)],
+    });
+    expect(status.balanceNow).toBe(50);
+  });
+
+  it("keeps same-day supplies entered before the count in it and adds later ones on top", () => {
+    const regimens = [reg("2026-11-01", 0, 0, 1)];
+    const supplies: SupplyInput[] = [
+      { date: "2026-11-01", quantity: 10, recordedAt: 1 },
+      { date: "2026-11-06", quantity: 28, recordedAt: 5 },
+      { date: "2026-11-06", quantity: 30, recordedAt: 20 },
+    ];
+    // 11-01..11-05 eat 5 → 5; 11-06 +28 → 33; counted 40 (the 28 already in it), +30 after → 70.
+    const sim = simulate(supplies, regimens, { counts: [count("2026-11-06", 0, 40, 10)] });
+    const d = day(sim, "2026-11-06");
+    expect(d.count).toEqual({ slotsDone: 0, before: 33, quantity: 40, late: 30 });
+    expect(d.supplied).toBe(58);
+    expect(d.startBalance).toBe(70);
+    expect(d.endOfDayBalance).toBe(69);
+    // Without entry times every same-day supply is taken as already counted.
+    const plain = simulate(
+      supplies.map(({ date, quantity }) => ({ date, quantity })),
+      regimens,
+      { counts: [count("2026-11-06", 0, 40)] },
+    );
+    expect(day(plain, "2026-11-06").startBalance).toBe(40);
+  });
+
+  it("brings stock back after a run-out, or empties it when the count is 0", () => {
+    const regimens = [reg("2026-11-01", 1, 0, 1)];
+    const back = simulate([sup("2026-11-01", 2)], regimens, { counts: [count("2026-11-04", 0, 4)] });
+    expect(day(back, "2026-11-02").slots.map((s) => s.status)).toEqual(["missed", "none", "missed"]);
+    expect(day(back, "2026-11-04").startBalance).toBe(4);
+    expect(back.outcome).toEqual({
+      kind: "depleted",
+      lastFull: { date: "2026-11-05", slot: "evening", remainingAfter: 0 },
+      partial: null,
+    });
+
+    // 11-01, 11-02 eat 4 → 96; 11-03 早 → 95, then counted 0 after 中: 晚 is missed.
+    const empty = simulate([sup("2026-11-01", 100)], regimens, { counts: [count("2026-11-03", 2, 0)] });
+    expect(day(empty, "2026-11-03").count).toEqual({ slotsDone: 2, before: 95, quantity: 0, late: 0 });
+    expect(day(empty, "2026-11-03").slots.map((s) => s.status)).toEqual(["full", "none", "missed"]);
+    expect(fullDays(empty)).toMatchObject({ lastFullDay: "2026-11-02" });
+  });
+
+  it("starts the timeline at a count when there is no supply", () => {
+    const sim = simulate([], [reg("2026-11-07", 1, 0, 1)], { counts: [count("2026-11-06", 3, 10)] });
+    expect(sim.days[0].date).toBe("2026-11-06");
+    expect(balanceAt(sim, momentAt("2026-11-06", 20 * 60))).toBe(10);
+    // 10 pills at 2 a day: 11-07..11-11.
+    expect(sim.outcome).toMatchObject({ kind: "depleted", lastFull: { date: "2026-11-11", slot: "evening" } });
   });
 });

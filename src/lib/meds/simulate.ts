@@ -26,6 +26,20 @@ export interface Dose {
 export interface SupplyInput {
   date: ISODate;
   quantity: number;
+  /** When it was entered; only compared with a count on the same day. */
+  recordedAt?: number;
+}
+
+/**
+ * A stock count: after `slotsDone` (0–3) of that day's doses the stock is `quantity`, whatever
+ * the earlier records say. A same-day supply entered after the count (later `recordedAt`) is
+ * added on top of it; one entered before it is already in the count.
+ */
+export interface CountInput {
+  date: ISODate;
+  slotsDone: 0 | 1 | 2 | 3;
+  quantity: number;
+  recordedAt?: number;
 }
 
 export interface RegimenInput extends Dose {
@@ -48,7 +62,7 @@ export interface SlotOutcome {
   slot: Slot;
   required: number;
   taken: number;
-  /** Balance right after this slot. */
+  /** Balance right after this slot (and after a stock count taken right then). */
   after: number;
   status: SlotStatus;
 }
@@ -56,8 +70,10 @@ export interface SlotOutcome {
 export interface DaySnapshot {
   date: ISODate;
   day: number;
-  /** Sum of supply logs on this day (added before the morning dose). */
+  /** Sum of supply logs on this day (added before the morning dose, or with a later count). */
   supplied: number;
+  /** A stock count on this day: the balance it replaced and what came on top of it. */
+  count: DayCount | null;
   /** Balance after today's supply, before the morning dose. */
   startBalance: number;
   /** Regimen in force today, or null before the first regimen. */
@@ -69,6 +85,17 @@ export interface DaySnapshot {
   slots: [SlotOutcome, SlotOutcome, SlotOutcome];
   taken: number;
   endOfDayBalance: number;
+}
+
+export interface DayCount {
+  /** How many of the day's slots were behind the count (0 = before the morning dose). */
+  slotsDone: 0 | 1 | 2 | 3;
+  /** What the records gave at that moment, replaced by the count. */
+  before: number;
+  /** The counted pills. */
+  quantity: number;
+  /** Same-day supplies entered after the count, added on top of it. */
+  late: number;
 }
 
 export interface FullDose {
@@ -109,6 +136,8 @@ export interface SimulateOptions {
   maxYears?: number;
   /** Hospital stays: every dose on these days is skipped. */
   pauses?: readonly DateRange[];
+  /** Stock counts (at most one per day; a later one in the list wins). */
+  counts?: readonly CountInput[];
 }
 
 const toHalves = (n: number) => Math.round(n * 2);
@@ -124,14 +153,23 @@ export function simulate(
   regimens: readonly RegimenInput[],
   options: SimulateOptions = {},
 ): Simulation {
-  if (supplies.length === 0 && regimens.length === 0) {
+  const counts = options.counts ?? [];
+  if (supplies.length === 0 && regimens.length === 0 && counts.length === 0) {
     return { days: [], lastRecordDate: null, outcome: { kind: "empty" } };
   }
 
+  const countOn = new Map<number, { at: number; halves: number; recordedAt: number | undefined }>();
+  for (const c of counts) countOn.set(toDayNum(c.date), { at: c.slotsDone, halves: toHalves(c.quantity), recordedAt: c.recordedAt });
+
+  // Supplies count from the start of their day, unless entered after that day's count.
   const suppliedOn = new Map<number, number>();
+  const lateOn = new Map<number, number>();
   for (const s of supplies) {
     const day = toDayNum(s.date);
-    suppliedOn.set(day, (suppliedOn.get(day) ?? 0) + toHalves(s.quantity));
+    const c = countOn.get(day);
+    const late = c !== undefined && c.recordedAt !== undefined && s.recordedAt !== undefined && s.recordedAt > c.recordedAt;
+    const into = late ? lateOn : suppliedOn;
+    into.set(day, (into.get(day) ?? 0) + toHalves(s.quantity));
   }
 
   // One regimen per day; if the caller passes duplicates the later one wins.
@@ -142,7 +180,7 @@ export function simulate(
   }
   const timeline = [...regimenOn.values()].sort((a, b) => a.day - b.day);
 
-  const recordDays = [...suppliedOn.keys(), ...regimenOn.keys()];
+  const recordDays = [...suppliedOn.keys(), ...lateOn.keys(), ...countOn.keys(), ...regimenOn.keys()];
   const start = Math.min(...recordDays);
   const lastRecord = Math.max(...recordDays);
   const horizon = Math.max(
@@ -164,8 +202,24 @@ export function simulate(
     const date = fromDayNum(day);
 
     // Step A: today's supply is available before the morning dose.
-    const supplied = suppliedOn.get(day) ?? 0;
-    balance += supplied;
+    const early = suppliedOn.get(day) ?? 0;
+    const late = lateOn.get(day) ?? 0;
+    balance += early;
+
+    // A count replaces the balance once `at` slots are behind; later supplies come on top.
+    const counted = countOn.get(day);
+    let count: DayCount | null = null;
+    const applyCount = (slotsDone: number) => {
+      if (!counted || counted.at !== slotsDone) return;
+      count = {
+        slotsDone: slotsDone as DayCount["slotsDone"],
+        before: fromHalves(balance),
+        quantity: fromHalves(counted.halves),
+        late: fromHalves(late),
+      };
+      balance = counted.halves + late;
+    };
+    applyCount(0);
     const startBalance = balance;
 
     // Step B: latest regimen with effectiveFrom <= today.
@@ -179,33 +233,38 @@ export function simulate(
     for (let i = 0; i < SLOTS.length; i++) {
       const slot = SLOTS[i];
       const dose = regimen && !paused ? regimen.doses[i] : 0;
+      let taken = 0;
+      let status: SlotStatus;
       if (dose <= 0) {
         // Nothing scheduled: skip the slot.
-        slots.push({ slot, required: 0, taken: 0, after: fromHalves(balance), status: "none" });
+        status = "none";
       } else if (balance >= dose) {
+        taken = dose;
         balance -= dose;
-        takenToday += dose;
         lastFull = { date, slot, remainingAfter: fromHalves(balance) };
         lastPartial = null;
-        slots.push({ slot, required: fromHalves(dose), taken: fromHalves(dose), after: fromHalves(balance), status: "full" });
+        status = "full";
       } else if (balance > 0) {
         // Not enough for a whole dose: take what is left, stock hits exactly 0.
-        const taken = balance;
+        taken = balance;
         balance = 0;
-        takenToday += taken;
         lastPartial = { date, slot, partialRemaining: fromHalves(taken), required: fromHalves(dose) };
-        slots.push({ slot, required: fromHalves(dose), taken: fromHalves(taken), after: 0, status: "partial" });
+        status = "partial";
       } else {
         // Out of stock: nothing to take, and the balance never goes negative.
-        slots.push({ slot, required: fromHalves(dose), taken: 0, after: 0, status: "missed" });
+        status = "missed";
       }
+      takenToday += taken;
+      applyCount(i + 1);
+      slots.push({ slot, required: status === "none" ? 0 : fromHalves(dose), taken: fromHalves(taken), after: fromHalves(balance), status });
     }
 
     // Step D: daily snapshot.
     days.push({
       date,
       day,
-      supplied: fromHalves(supplied),
+      supplied: fromHalves(early + late),
+      count,
       startBalance: fromHalves(startBalance),
       regimen: regimen
         ? { morning: fromHalves(regimen.doses[0]), noon: fromHalves(regimen.doses[1]), evening: fromHalves(regimen.doses[2]) }

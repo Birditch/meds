@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { Area, AreaChart, CartesianGrid, ReferenceArea, ReferenceDot, ReferenceLine, XAxis, YAxis } from "recharts";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
 import { fmtDate, fmtDay, fromDayNum, toDayNum, type ISODate } from "@/lib/meds/dates";
-import { fmtQty, formatRegimenShort } from "@/lib/meds/format";
+import { COUNT_MOMENT_LABEL, fmtQty, formatRegimenShort } from "@/lib/meds/format";
 import {
   SLOTS,
   SLOT_LABEL,
@@ -20,8 +20,8 @@ import {
 /*
  * Time is continuous on the x axis: x = day number, x = d is 00:00 of day d.
  * Each day contributes a point at its start (after that day's supply). A supply day adds a
- * point just before it at the same x, so the line jumps vertically. A final point at
- * last+1 closes the last day.
+ * point just before it at the same x, so the line jumps vertically; so does a stock count, at
+ * the moment it was taken. A final point at last+1 closes the last day.
  *
  * Short timelines ("slot" mode) also get a vertical drop at each dose time (08:00 / 12:00 /
  * 18:00), so the line is an exact staircase and history/projection split at the current
@@ -38,7 +38,13 @@ interface Point {
   idx: number;
   history?: number;
   projection?: number;
-  marker?: "supply" | "regimen" | "both";
+  marker?: Marks;
+}
+
+interface Marks {
+  supply?: boolean;
+  regimen?: boolean;
+  count?: boolean;
 }
 
 /** Where history ends: start of today (day mode) or just after the last slot taken (slot mode). */
@@ -60,7 +66,7 @@ const chartConfig = {
 
 function buildPoints(sim: Simulation, split: number, slotMode: boolean, balanceNow: number): Point[] {
   const points: Point[] = [];
-  const put = (x: number, idx: number, y: number, marker?: Point["marker"]) => {
+  const put = (x: number, idx: number, y: number, marker?: Marks) => {
     points.push({
       x,
       idx,
@@ -80,15 +86,25 @@ function buildPoints(sim: Simulation, split: number, slotMode: boolean, balanceN
 
   sim.days.forEach((d, i) => {
     const prevEnd = i > 0 ? sim.days[i - 1].endOfDayBalance : 0;
+    const c = d.count;
+    const countAtStart = c?.slotsDone === 0;
+    // Supplies counted after a mid-day count show with it, not at the start of the day.
+    const suppliedAtStart = d.supplied - (c && !countAtStart ? c.late : 0) > 0;
     placeSplitBefore(d.day, i);
-    if (d.supplied > 0) put(d.day, i, prevEnd);
-    const marker = d.supplied > 0 && d.regimenChanged ? "both" : d.supplied > 0 ? "supply" : d.regimenChanged ? "regimen" : undefined;
-    put(d.day, i, d.startBalance, marker);
-    if (!slotMode) return;
+    if (suppliedAtStart || countAtStart) put(d.day, i, prevEnd);
+    const marks: Marks = { supply: suppliedAtStart, regimen: d.regimenChanged, count: countAtStart };
+    put(d.day, i, d.startBalance, marks.supply || marks.regimen || marks.count ? marks : undefined);
     let before = d.startBalance;
     d.slots.forEach((s, k) => {
-      if (s.taken > 0) {
-        const x = d.day + SLOT_TAKEN_AT[SLOTS[k]] / 1440;
+      const x = d.day + SLOT_TAKEN_AT[SLOTS[k]] / 1440;
+      const counted = c !== null && c.slotsDone === k + 1;
+      if (counted) {
+        // The dose (if any) and then the jump to the counted stock, at the same moment.
+        placeSplitBefore(x, i);
+        put(x, i, before);
+        if (s.taken > 0) put(x, i, c.before);
+        put(x, i, s.after, { count: true, supply: c.late > 0 });
+      } else if (slotMode && s.taken > 0) {
         placeSplitBefore(x, i);
         put(x, i, before);
         put(x, i, s.after);
@@ -169,10 +185,17 @@ function DayTooltip({ day }: { day: DaySnapshot }) {
           "当日尚无生效规律"
         )}
       </div>
-      {(day.supplied > 0 || day.regimenChanged || day.paused) && (
+      {(day.supplied > 0 || day.regimenChanged || day.paused || day.count) && (
         <div className="grid gap-0.5">
           {day.paused && <div>住院中：不消耗家里的药</div>}
           {day.supplied > 0 && <div>➕ 补药 +{fmtQty(day.supplied)} 颗</div>}
+          {day.count && (
+            <div>
+              📋 盘点（{COUNT_MOMENT_LABEL[day.count.slotsDone]}）：实际 {fmtQty(day.count.quantity)} 颗，按记录推算{" "}
+              {fmtQty(day.count.before)} 颗
+              {day.count.late > 0 && `；盘点后又补 +${fmtQty(day.count.late)} 颗`}
+            </div>
+          )}
           {day.regimenChanged && day.regimen && <div>⚙️ 规律变更为 {formatRegimenShort(day.regimen)}</div>}
         </div>
       )}
@@ -192,10 +215,10 @@ function DayTooltip({ day }: { day: DaySnapshot }) {
 function Marker(props: { cx?: number; cy?: number; payload?: Point; index?: number }) {
   const { cx, cy, payload, index } = props;
   if (cx == null || cy == null || !payload?.marker) return <g key={`m-${index}`} />;
-  const supply = payload.marker === "supply" || payload.marker === "both";
-  const regimen = payload.marker === "regimen" || payload.marker === "both";
+  const { supply, regimen, count } = payload.marker;
   return (
     <g key={`m-${index}`}>
+      {count && <circle cx={cx} cy={cy} r={6.5} fill="var(--background)" stroke="var(--foreground)" strokeWidth={2} />}
       {regimen && (
         <rect
           x={cx - 5.5}
@@ -209,7 +232,14 @@ function Marker(props: { cx?: number; cy?: number; payload?: Point; index?: numb
         />
       )}
       {supply && (
-        <circle cx={cx} cy={cy} r={regimen ? 3.5 : 5} fill="var(--color-supply)" stroke="var(--background)" strokeWidth={2} />
+        <circle
+          cx={cx}
+          cy={cy}
+          r={regimen || count ? 3 : 5}
+          fill="var(--color-supply)"
+          stroke={count ? "none" : "var(--background)"}
+          strokeWidth={2}
+        />
       )}
     </g>
   );
@@ -352,12 +382,17 @@ export function StockChart({
           )}
         </AreaChart>
       </ChartContainer>
-      <ChartLegend nowLabel={slotMode ? "现在" : "今天"} visits={visitXs.length > 0} stays={stayXs.length > 0} />
+      <ChartLegend
+        nowLabel={slotMode ? "现在" : "今天"}
+        visits={visitXs.length > 0}
+        stays={stayXs.length > 0}
+        counts={sim.days.some((d) => d.count)}
+      />
     </div>
   );
 }
 
-function ChartLegend({ nowLabel, visits, stays }: { nowLabel: string; visits: boolean; stays: boolean }) {
+function ChartLegend({ nowLabel, visits, stays, counts }: { nowLabel: string; visits: boolean; stays: boolean; counts: boolean }) {
   return (
     <div className="mt-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
       <span className="flex items-center gap-1.5">
@@ -384,6 +419,14 @@ function ChartLegend({ nowLabel, visits, stays }: { nowLabel: string; visits: bo
         </svg>
         规律变更
       </span>
+      {counts && (
+        <span className="flex items-center gap-1.5">
+          <svg width="12" height="12" aria-hidden>
+            <circle cx="6" cy="6" r="4.5" className="fill-background stroke-foreground" strokeWidth="2" />
+          </svg>
+          盘点
+        </span>
+      )}
       <span className="flex items-center gap-1.5">
         <svg width="10" height="10" aria-hidden>
           <circle cx="5" cy="5" r="4.5" className="fill-[#b3262e] dark:fill-[#c9343c]" />

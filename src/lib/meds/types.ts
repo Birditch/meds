@@ -7,6 +7,17 @@ export interface SupplyRecord {
   id: number;
   date: ISODate;
   quantity: number;
+  /** When it was entered (ms since epoch): a supply entered after a same-day count comes on top of it. */
+  recordedAt: number;
+}
+
+/** A stock count: the pills actually at home after `slotsDone` (0–3) of that day's doses. */
+export interface CountRecord {
+  id: number;
+  date: ISODate;
+  slotsDone: 0 | 1 | 2 | 3;
+  quantity: number;
+  recordedAt: number;
 }
 
 export interface RegimenRecord {
@@ -29,6 +40,7 @@ export interface MedicationRecord {
   /** Extra pills kept at home, outside the stock simulation. */
   reserve: number;
   supplies: SupplyRecord[];
+  counts: CountRecord[];
   regimens: RegimenRecord[];
   /** Pinyin of name and brand (full and initials), computed on the server for fuzzy search. */
   searchKeys: string[];
