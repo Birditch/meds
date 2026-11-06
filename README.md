@@ -39,9 +39,18 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   stock left after Wednesday evening's dose, and what it prescribes must last through the
   Wednesday evening before the next visit. They are usually every 4 weeks at the start of a
   month (days 1–10, when the hospital has imported drugs): the add form offers the Thursday
-  about 4 weeks later and that pushed back to a month start, the last visit is assumed to be
-  followed by one, and a visit on another weekday is flagged. If stock runs out before the
-  first visit, it names the last Thursday that would still avoid the gap.
+  about 4 weeks later and that pushed back to a month start, and a visit on another weekday is
+  flagged. The last visit is assumed to be followed by one on the Thursday 4 weeks later (so it
+  covers through the Wednesday evening before that); entering the next visit replaces the
+  assumption with the real gap. If stock runs out before the first visit, it names the last
+  Thursday that would still avoid the gap.
+- **PDF lists (导出 PDF)**: A4, Chinese, generated on the server for the current moment.
+  **复诊开药清单** (per visit, the next one from the toolbar): the stock left after the Wednesday
+  evening before the visit, what the period to the following visit (usually 4 weeks) takes, and
+  what is short as `N 盒（M 颗）`, with each medication's reason, the whole packs to get, every
+  purchase (each supply log counts as one) and stock count. **药品现有清单**: current stock,
+  regimen, run-out day, purchases and counts. **药品储备清单**: the reserve and how long it
+  lasts. The visit and stock lists never include the reserve.
 - **Hospital stays (住院)**: no medication is taken from home stock on those days (start and end
   included), so run-out dates and visit needs move back accordingly.
 - **Stock chart**: vertical jumps on refills, slope changes on regimen changes, a "today" line,
@@ -122,7 +131,11 @@ add `-v` only if you mean to wipe it).
 `GET /api/medications` returns all data (medications with their supplies, counts and regimens,
 visits, hospital stays) with the
 server-side projection, visit plan and reserve estimate (`?today=YYYY-MM-DD&minutes=N` to
-evaluate another moment). `GET /api/health` checks the database.
+evaluate another moment). `GET /api/reports/visit[?date=YYYY-MM-DD]`, `/api/reports/stock` and
+`/api/reports/reserve` return the PDF lists (inline, Chinese file names). They embed Noto Sans
+SC (SIL OFL 1.1, from `@expo-google-fonts/noto-sans-sc`, subset to the glyphs used); the build
+traces exactly the two weights used (see `src/lib/meds/pdf-fonts.ts`). `GET /api/health` checks
+the database.
 
 ## Deployment
 

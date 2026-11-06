@@ -102,8 +102,8 @@ describe("scheduleVisits", () => {
     expect(s.map((v) => v.date)).toEqual(["2026-11-19", "2026-12-03"]); // past visits drop out
     expect(s[0]).toMatchObject({ estimated: false });
     expect(s[1]).toMatchObject({ estimated: true });
-    // 12-03 + 4 weeks = 12-31, not a month start → 01-07; covered through Wednesday 01-06.
-    expect(planHorizon(s)).toBe("2027-01-06");
+    // The usual 4 weeks after the last one: Thursday 12-31, so covered through Wednesday 12-30.
+    expect(planHorizon(s)).toBe("2026-12-30");
   });
 
   it("plans a lone visit as well", () => {
@@ -123,11 +123,11 @@ describe("planVisits", () => {
     expect(status.plan.beforeFirst).toBeNull();
     expect(status.plan.visits).toEqual([
       // Wed 11-18 evening: 50 − 13 days × 2 = 24 left. Thu 11-19 .. Wed 12-16 = 28 days × 2 = 56 → 32.
-      { date: "2026-11-19", coverUntil: "2026-12-16", estimated: false, stockBefore: 24, need: 32, packs: null, prescribed: 32 },
+      { date: "2026-11-19", coverUntil: "2026-12-16", estimated: false, demand: 56, supplied: 0, stockBefore: 24, need: 32, packs: null, prescribed: 32 },
       // Nothing left on the current records by then: 28 days × 2.
-      { date: "2026-12-17", coverUntil: "2027-01-13", estimated: false, stockBefore: 0, need: 56, packs: null, prescribed: 56 },
-      // Last visit: 4 weeks on is 02-11, pushed back to the 03-04 month start → 01-14 .. 03-03 = 49 days × 2.
-      { date: "2027-01-14", coverUntil: "2027-03-03", estimated: true, stockBefore: 0, need: 98, packs: null, prescribed: 98 },
+      { date: "2026-12-17", coverUntil: "2027-01-13", estimated: false, demand: 56, supplied: 0, stockBefore: 0, need: 56, packs: null, prescribed: 56 },
+      // Last visit: the usual 4 weeks, to Wednesday 02-10 (not pushed to a month start).
+      { date: "2027-01-14", coverUntil: "2027-02-10", estimated: true, demand: 56, supplied: 0, stockBefore: 0, need: 56, packs: null, prescribed: 56 },
     ]);
     // The conclusion is unaffected by planning further ahead.
     expect(status.conclusion.headline).toBe("能吃到：2026.11.30 周一");
@@ -140,7 +140,7 @@ describe("planVisits", () => {
     expect(plan.map(({ stockBefore, need, packs, prescribed }) => ({ stockBefore, need, packs, prescribed }))).toEqual([
       { stockBefore: 24, need: 32, packs: 2, prescribed: 56 }, // 24 left over
       { stockBefore: 24, need: 32, packs: 2, prescribed: 56 }, // 56 − 24; 24 left over
-      { stockBefore: 24, need: 74, packs: 3, prescribed: 84 }, // 98 − 24
+      { stockBefore: 24, need: 32, packs: 2, prescribed: 56 }, // 56 − 24
     ]);
   });
 
@@ -172,7 +172,7 @@ describe("planVisits", () => {
 
   it("needs nothing when stock already covers the period, and counts logged refills", () => {
     const s = medicationStatus([sup("2026-11-06", 50), sup("2026-12-01", 100)], regimens, NOW, thursdays("2026-11-19", "2026-12-17"));
-    expect(s.plan.visits[0].need).toBe(0); // 24 + the 12-01 refill covers through 12-16
+    expect(s.plan.visits[0]).toMatchObject({ need: 0, supplied: 100 }); // 24 + the 12-01 refill covers through 12-16
   });
 
   it("follows regimen changes inside a period", () => {

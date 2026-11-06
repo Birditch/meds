@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarClockIcon, PencilIcon, PlusIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { CalendarClockIcon, FileDownIcon, PencilIcon, PlusIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { addVisit, deleteVisit, updateVisit } from "@/app/actions";
@@ -24,6 +24,7 @@ import {
 } from "@/lib/meds/visits";
 import { cn } from "@/lib/utils";
 import { DatePicker } from "./date-picker";
+import { reportHref } from "./export-menu";
 import { FormError, SubmitButton, useActionForm } from "./forms";
 import { ConfirmDelete } from "./history";
 
@@ -176,7 +177,7 @@ export function VisitPlan({
         </CardTitle>
         <CardDescription>
           {CLINIC_DAY}就诊：按前一天（周三）晚上吃完后的余量，算出这次要开多少，才能不动用储备吃到下次就诊前一天的晚上。最后一次之后按“4
-          周后的{CLINIC_DAY}、顺延到月初”估算。
+          周后的{CLINIC_DAY}”估算（吃到那天前一晚），添加下一次就诊可按实际间隔算。
         </CardDescription>
         <CardAction>
           <Button size="sm" variant={adding ? "secondary" : "outline"} onClick={() => setAdding((v) => !v)}>
@@ -253,6 +254,14 @@ export function VisitPlan({
                     <span className="text-sm text-muted-foreground">{daysFromToday(v.date, today)}</span>
                     <MonthStartBadge date={v.date} />
                     <div className="ml-auto flex">
+                      {medications.length > 0 && (
+                        <Button asChild variant="ghost" size="sm" className="text-muted-foreground">
+                          <a href={reportHref("visit", v.date)} target="_blank" rel="noopener" title="导出这次复诊的开药清单（PDF）">
+                            <FileDownIcon />
+                            开药清单
+                          </a>
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon-sm"
@@ -274,7 +283,7 @@ export function VisitPlan({
                     {v.date === today ? "按现在的余量" : `按 ${fmtDate(addDays(v.date, -1))} 晚上吃完后的余量`}
                     {sample &&
                       `，这次开的药要吃到 ${fmtDate(sample.coverUntil)} 晚上（${spanText(diffDays(sample.coverUntil, v.date) + 1)}）`}
-                    {sample?.estimated && `；下次按 4 周后的${CLINIC_DAY}、顺延到月初估算，添加下一次就诊可精确计算`}
+                    {sample?.estimated && `；下次按 4 周后的${CLINIC_DAY}估算，添加下一次就诊可按实际间隔算`}
                   </p>
                 </div>
               )}

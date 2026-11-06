@@ -13,11 +13,12 @@
  * the amounts never double-count. With whole boxes or bottles, C_k ≥ S_k and the extra pills carry
  * over: visit k arrives with the current-timeline stock plus C_{k−1} − S_{k−1}.
  *
- * Visits are on Thursdays, usually every 4 weeks, at the start of a month (days 1–10, when
- * the hospital has imported drugs). A visit counts the stock left after Wednesday evening and
- * must cover through the Wednesday evening before the next visit. The last visit has no
- * successor, so its period is assumed to run to the usual next one: the Thursday 4 weeks
- * later, pushed back whole weeks into a month start.
+ * Visits are on Thursdays, usually every 4 weeks, often at the start of a month (days 1–10,
+ * when the hospital has imported drugs). A visit counts the stock left after Wednesday evening
+ * and must cover through the Wednesday evening before the next visit. The last visit has no
+ * successor, so its period is assumed to be the usual 4 weeks: through the Wednesday evening
+ * before the Thursday 4 weeks later. Entering that next visit (say, pushed back to a month
+ * start) replaces the assumption.
  */
 
 import { addDays, diffDays, fromDayNum, toDayNum, type ISODate } from "./dates";
@@ -32,8 +33,12 @@ export interface VisitNeed {
   date: ISODate;
   /** Last day this visit's prescription has to cover. */
   coverUntil: ISODate;
-  /** coverUntil was assumed from the usual 4-week, month-start rhythm (no later visit entered). */
+  /** coverUntil was assumed from the usual 4 weeks (no later visit entered). */
   estimated: boolean;
+  /** Pills the regimen takes in the period (hospital days excluded, only doses still ahead). */
+  demand: number;
+  /** Pills already logged as supplies within the period. */
+  supplied: number;
   /** Stock expected when arriving (before that day's supplies and doses), if earlier visits follow the plan. */
   stockBefore: number;
   /** Pills still lacking for the period after what earlier visits got; 0 = already covered. */
@@ -136,7 +141,7 @@ export function scheduleVisits(visits: readonly VisitInput[], today: ISODate): V
     const next = upcoming[i + 1];
     return next
       ? { date, endDay: toDayNum(next), estimated: false }
-      : { date, endDay: toDayNum(usualNextVisit(date).monthStart), estimated: true };
+      : { date, endDay: toDayNum(usualNextVisit(date).fourWeeks), estimated: true };
   });
 }
 
@@ -156,21 +161,26 @@ export function planVisits(
   const doneUpTo = slotPos(toDayNum(now.date), now.slotsDone - 1);
   const first = sim.days[0]?.day ?? Infinity;
 
-  /** Unmet demand (required − taken) in [fromDay, toDay), counting only slots after now. */
+  /** Unmet demand (required − taken) in [fromDay, toDay), counting only slots after now; also all that is required, and supplied. */
   const shortIn = (fromDay: number, toDay: number) => {
     let total = 0;
+    let required = 0;
+    let supplied = 0;
     let firstShort: SlotRef | null = null;
     for (let day = Math.max(fromDay, first); day < toDay; day++) {
       const snap = sim.days[day - first];
       if (!snap) break;
+      supplied += snap.supplied;
       snap.slots.forEach((s, k) => {
-        if (slotPos(day, k) <= doneUpTo || s.taken >= s.required) return;
+        if (slotPos(day, k) <= doneUpTo) return;
+        required += s.required;
+        if (s.taken >= s.required) return;
         total += s.required - s.taken;
         firstShort ??= { date: snap.date, slot: SLOTS[k] };
       });
     }
     // Assigned inside the callback, which TypeScript's narrowing does not follow.
-    return { total, firstShort: firstShort as SlotRef | null };
+    return { total, required, supplied, firstShort: firstShort as SlotRef | null };
   };
 
   const baseStock = (date: ISODate) =>
@@ -180,12 +190,23 @@ export function planVisits(
   let got = 0; // C: pills got at the visits so far
   const visits = schedule.map((v): VisitNeed => {
     const stockBefore = baseStock(v.date) + got - short;
-    short += shortIn(toDayNum(v.date), v.endDay).total;
+    const period = shortIn(toDayNum(v.date), v.endDay);
+    short += period.total;
     const need = Math.max(0, short - got);
     const packs = perBox ? Math.ceil(need / perBox) : null;
     const prescribed = packs !== null && perBox ? packs * perBox : need;
     got += prescribed;
-    return { date: v.date, coverUntil: fromDayNum(v.endDay - 1), estimated: v.estimated, stockBefore, need, packs, prescribed };
+    return {
+      date: v.date,
+      coverUntil: fromDayNum(v.endDay - 1),
+      estimated: v.estimated,
+      demand: period.required,
+      supplied: period.supplied,
+      stockBefore,
+      need,
+      packs,
+      prescribed,
+    };
   });
 
   let beforeFirst: VisitPlan["beforeFirst"] = null;

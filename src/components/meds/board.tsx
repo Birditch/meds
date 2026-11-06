@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { scheduleVisits } from "@/lib/meds/visits";
 import { BulkImportDialog } from "./bulk-import";
 import { DetailDialog } from "./detail-dialog";
+import { ExportMenu } from "./export-menu";
 import { AddSupplyDialog, CreateMedicationDialog, RegimenDialog, ReserveDialog } from "./medication-dialogs";
 import { StatusBadge, toneText } from "./status-badge";
 import { HospitalStays } from "./stays";
@@ -95,6 +96,7 @@ export function Board({
             <ClipboardListIcon />
             一键录入
           </Button>
+          {medications.length > 0 && <ExportMenu nextVisit={upcoming[0] ?? null} />}
           <Button onClick={() => setCreating(true)}>
             <PlusIcon />
             新增药品
