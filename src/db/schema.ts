@@ -9,6 +9,7 @@ export const medications = pgTable(
   {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
     name: text().notNull(),
+    /** brand / packUnit / perBox mirror the default pack (medication_packs, position 0). */
     brand: text(),
     dosage: text().notNull(),
     /** How it is packed: 盒 (box) or 瓶 (bottle). */
@@ -17,6 +18,8 @@ export const medications = pgTable(
     perBox: numeric({ precision: 7, scale: 1, mode: "number" }),
     /** Extra pills kept at home for emergencies; not part of the stock simulation. */
     reserve: numeric({ precision: 10, scale: 1, mode: "number" }).notNull().default(0),
+    /** Tags: codes from src/lib/meds/tags.ts (精二, 处方药, 医保乙类…) or the user's own words. */
+    tags: text().array().notNull().default(sql`'{}'::text[]`),
   },
   (t) => [
     check("medications_pack_unit", sql`${t.packUnit} in ('盒', '瓶')`),
@@ -24,6 +27,33 @@ export const medications = pgTable(
     check("medications_per_box_half_step", halfStep("per_box")),
     check("medications_reserve_non_negative", sql`${t.reserve} >= 0`),
     check("medications_reserve_half_step", halfStep("reserve")),
+  ],
+);
+
+/**
+ * The ways one medication (one pill: name + strength) comes: each manufacturer's or brand's
+ * pack, with its own unit and pills per pack. They share the medication's stock. The first
+ * (lowest position) is the default, used to count whole packs for a visit.
+ */
+export const medicationPacks = pgTable(
+  "medication_packs",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    medicationId: integer()
+      .notNull()
+      .references(() => medications.id, { onDelete: "cascade" }),
+    /** Manufacturer or brand (厂家 / 品牌); null when not known. */
+    brand: text(),
+    packUnit: text({ enum: ["盒", "瓶"] }).notNull().default("盒"),
+    perBox: numeric({ precision: 7, scale: 1, mode: "number" }),
+    position: smallint().notNull().default(0),
+    createdAt: timestamp({ withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("medication_packs_medication_idx").on(t.medicationId, t.position),
+    check("medication_packs_pack_unit", sql`${t.packUnit} in ('盒', '瓶')`),
+    check("medication_packs_per_box_positive", sql`${t.perBox} > 0`),
+    check("medication_packs_per_box_half_step", halfStep("per_box")),
   ],
 );
 
@@ -36,6 +66,8 @@ export const supplyLogs = pgTable(
       .references(() => medications.id, { onDelete: "cascade" }),
     date: date({ mode: "string" }).notNull(),
     quantity: numeric({ precision: 10, scale: 1, mode: "number" }).notNull(),
+    /** The pack bought (which manufacturer), when known. */
+    packId: integer().references(() => medicationPacks.id, { onDelete: "set null" }),
     /** When the entry was made: orders it against a stock count on the same day. */
     createdAt: timestamp({ withTimezone: true, mode: "date" }).notNull().defaultNow(),
   },

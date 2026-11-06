@@ -23,11 +23,14 @@ import {
   visitOrdinal,
   type VisitNeed,
 } from "@/lib/meds/visits";
+import { otherPacksText } from "@/lib/meds/reports";
+import { isSpecialRx } from "@/lib/meds/tags";
 import { cn } from "@/lib/utils";
 import { DatePicker } from "./date-picker";
 import { FormError, SubmitButton, useActionForm } from "./forms";
 import { ConfirmDelete } from "./history";
 import { reportHref } from "./reports-board";
+import { TagBadges } from "./tags";
 
 const dayLabel = fmtDate;
 
@@ -123,6 +126,8 @@ function MonthStartBadge({ date }: { date: ISODate }) {
 
 function NeedCell({ need, medication }: { need: VisitNeed; medication: MedicationRecord }) {
   if (need.need === 0) return <span className="text-muted-foreground">无需开药</span>;
+  // The boxes are the default manufacturer's; the others' packs may hold another count.
+  const others = otherPacksText(need, medication);
   if (need.packs !== null) {
     return (
       <span className="grid justify-items-end">
@@ -133,6 +138,7 @@ function NeedCell({ need, medication }: { need: VisitNeed; medication: Medicatio
           缺 {fmtQty(need.need)} 颗 · 开 {fmtQty(need.prescribed)} 颗
           {need.prescribed > need.need ? `，多 ${fmtQty(need.prescribed - need.need)} 颗留到下次` : ""}
         </span>
+        {others && <span className="text-xs text-balance text-muted-foreground">{others}</span>}
       </span>
     );
   }
@@ -313,8 +319,9 @@ export function VisitPlan({
                           <td className="py-1.5 pr-3 align-top">
                             {m.name}
                             <span className="block text-xs text-muted-foreground sm:ml-1.5 sm:inline">
-                              {[m.brand, m.dosage].filter(Boolean).join(" · ")}
+                              {[m.dosage, m.packs.map((p) => p.brand).filter(Boolean).join(" / ")].filter(Boolean).join(" · ")}
                             </span>
+                            <TagBadges tags={m.tags.filter((t) => isSpecialRx([t]) || t === "imported")} className="ml-1.5 align-middle" />
                           </td>
                           <td className="py-1.5 pr-3 text-right align-top tabular-nums">
                             {need ? (

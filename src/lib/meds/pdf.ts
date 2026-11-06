@@ -11,9 +11,15 @@ import {
   medicationLabel,
   needReason,
   needText,
+  otherPacksText,
   packSize,
+  packsText,
   prescriptionText,
   purchaseLines,
+  specialRx,
+  specialRxText,
+  tagLines,
+  tagsText,
   type ReportInput,
   type ReportItem,
   type ReserveReport,
@@ -252,9 +258,16 @@ class Writer {
 /* -------------------------------------- helpers -------------------------------------- */
 
 const nameCell = (m: ReportItem["medication"]): Cell => ({
-  text: m.name,
+  text: `${m.name} ${m.dosage}`,
   bold: true,
-  sub: [m.brand, m.dosage, packSize(m)].filter(Boolean).join(" · ") || null,
+  sub:
+    [
+      m.packs.length > 1 ? m.packs.map((p) => p.brand ?? "未写厂家").join(" / ") : m.brand,
+      m.packs.length > 1 ? null : packSize(m),
+      tagsText(m) || null,
+    ]
+      .filter(Boolean)
+      .join(" · ") || null,
 });
 
 const regimenCell = (it: ReportItem): Cell =>
@@ -300,6 +313,14 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
     `需开药 ${r.needed.length} 种，无需开药 ${r.covered.length} 种` + (r.inactive.length ? `，未在吃 ${r.inactive.length} 种（不需要开）。` : "。"),
     { bold: true },
   );
+  const special = r.needed.filter((it) => specialRx(it.medication));
+  if (special.length) {
+    w.paragraph(
+      `其中 ${special.length} 种是麻醉 / 精神类特殊管理药品（${special.map((it) => `${it.medication.name}（${specialRxText(it.medication)}）`).join("、")}）：` +
+        "需开专用处方，单张处方用量受限（精二一般每张不超过 7 日用量，慢性病可适当延长、需医生注明），请提前和医生确认能开够到下次复诊。",
+      { color: ALERT },
+    );
+  }
 
   if (r.needed.length) {
     w.table(
@@ -326,11 +347,14 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
     r.needed.forEach((it, i) => {
       const m = it.medication;
       w.itemHeading(`${i + 1}. ${medicationLabel(m)}`, { text: `缺 ${needText(it.need, m)}`, color: ALERT });
-      w.field("规格", packSize(m) ? `每${m.packUnit} ${fmtQty(m.perBox!)} 颗` : `未写明每${m.packUnit}颗数（按颗计）`);
+      w.field(m.packs.length > 1 ? "厂家/包装" : "规格", packSize(m) || m.packs.length > 1 ? packsText(m) : `未写明每${m.packUnit}颗数（按颗计）`);
+      const tags = tagLines(m);
+      if (tags.length) w.field("标签", tags, specialRx(m) ? ALERT : undefined);
       w.field("服用规律", formatRegimen(it.status.current));
       w.field("现有药", headline(it));
       w.field("复购原因", needReason(it, r, ctx.input.now));
-      w.field("本次开药", prescriptionText(it.need, m));
+      const others = otherPacksText(it.need, m);
+      w.field("本次开药", others ? [`按${m.brand ? ` ${m.brand} ` : "默认厂家"}：${prescriptionText(it.need, m)}`, others] : prescriptionText(it.need, m));
       const bought = purchaseLines(m, today);
       w.field("购买记录", bought.length ? bought : "暂无购买记录");
       const counted = countLines(m);
@@ -417,7 +441,9 @@ export async function renderStockPdf(r: StockReport, ctx: RenderContext): Promis
   r.items.forEach((it, i) => {
     const m = it.medication;
     w.itemHeading(`${i + 1}. ${medicationLabel(m)}`, { text: `现有 ${fmtQty(it.status.balanceNow)} 颗` });
-    w.field("规格", packSize(m) ? `每${m.packUnit} ${fmtQty(m.perBox!)} 颗` : `未写明每${m.packUnit}颗数`);
+    w.field(m.packs.length > 1 ? "厂家/包装" : "规格", packSize(m) || m.packs.length > 1 ? packsText(m) : `未写明每${m.packUnit}颗数`);
+    const tags = tagLines(m);
+    if (tags.length) w.field("标签", tags);
     w.field("服用规律", formatRegimen(it.status.current));
     w.field("现有药", headline(it));
     const bought = purchaseLines(m, today);

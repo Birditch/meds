@@ -126,7 +126,7 @@ export function SupplyHistory({
         <div className="rounded-lg border bg-muted/30 p-3">
           <SupplyForm
             today={today}
-            pack={medication}
+            packs={medication.packs}
             plan={{ medication, pauses, visits }}
             submitLabel="添加"
             onSubmit={(f) => addSupply(medication.id, f)}
@@ -144,8 +144,8 @@ export function SupplyHistory({
             <li key={r.id} className="bg-muted/30 p-3">
               <SupplyForm
                 today={today}
-                pack={medication}
-                initial={{ date: r.date, quantity: r.quantity }}
+                packs={medication.packs}
+                initial={{ date: r.date, quantity: r.quantity, packId: r.packId }}
                 onSubmit={(f) => updateSupply(r.id, f)}
                 onDone={() => setEditing(null)}
                 onCancel={() => setEditing(null)}
@@ -155,6 +155,9 @@ export function SupplyHistory({
             <li key={r.id} className="flex items-center gap-3 px-3 py-2">
               <span className="tabular-nums">{fmtDate(r.date)}</span>
               {r.date > today && <Badge variant="outline">计划</Badge>}
+              {medication.packs.length > 1 && r.packId !== null && (
+                <span className="truncate text-xs text-muted-foreground">{medication.packs.find((p) => p.id === r.packId)?.brand ?? "未写厂家"}</span>
+              )}
               <span className="ml-auto font-medium tabular-nums">+{fmtQty(r.quantity)} 颗</span>
               <div className="flex">
                 <Button

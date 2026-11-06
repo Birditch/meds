@@ -8,11 +8,16 @@ import { formatRegimenShort, fmtQty, packNote } from "@/lib/meds/format";
 import { addDays, fmtDate, fmtDay, weekdayCN, type ISODate } from "@/lib/meds/dates";
 import { balanceAt, regimenAt, simulate, supplyToLast, type DateRange } from "@/lib/meds/simulate";
 import { clinicDayOnOrBefore, usualNextVisit } from "@/lib/meds/visits";
-import type { ActionResult, MedicationRecord, RegimenRecord } from "@/lib/meds/types";
+import type { ActionResult, MedicationRecord, PackRecord, RegimenRecord } from "@/lib/meds/types";
+import { cn } from "@/lib/utils";
 import { regimenSchema, supplySchema, type RegimenFields, type SupplyFields } from "@/lib/meds/validation";
 import { DatePicker } from "./date-picker";
 import { QuantityInput, parseQuantity } from "./quantity-input";
 import { SupplyAmountInput, amountState, resolveAmount } from "./supply-amount";
+
+/** "江苏恩华 · 20 颗/盒". */
+export const packLabel = (p: Pick<PackRecord, "brand" | "perBox" | "packUnit">) =>
+  [p.brand ?? "未写厂家", p.perBox ? `${fmtQty(p.perBox)} 颗/${p.packUnit}` : `${p.packUnit}装`].join(" · ");
 
 export function FormError({ children }: { children: ReactNode }) {
   if (!children) return null;
@@ -74,7 +79,7 @@ function untilChoices(from: ISODate, visits: readonly ISODate[]): { label: strin
 export function SupplyForm({
   today,
   initial,
-  pack,
+  packs,
   plan,
   submitLabel = "保存",
   onSubmit,
@@ -83,8 +88,8 @@ export function SupplyForm({
 }: {
   today: ISODate;
   initial?: SupplyFields;
-  /** The medication's pack: a new entry starts in packs when the size is known. */
-  pack?: Pick<MedicationRecord, "perBox" | "packUnit">;
+  /** The medication's packs (default first): the one bought is recorded; amounts can be in its packs. */
+  packs?: readonly PackRecord[];
   /** For a new supply: also offer "enough to last until a date", worked out from the regimen. */
   plan?: SupplyPlanContext;
   submitLabel?: string;
@@ -93,7 +98,13 @@ export function SupplyForm({
   onCancel?: () => void;
 }) {
   const [date, setDate] = useState(initial?.date ?? today);
+  const [packId, setPackId] = useState(() => packs?.find((p) => p.id === initial?.packId)?.id ?? packs?.[0]?.id ?? null);
+  const pack = packs?.find((p) => p.id === packId);
   const [amount, setAmount] = useState(() => amountState(initial ? String(initial.quantity) : "", pack?.perBox ?? null));
+  const choosePack = (p: PackRecord) => {
+    setPackId(p.id);
+    setAmount((a) => ({ ...a, perBox: p.perBox ? String(p.perBox) : "" }));
+  };
   const [byDate, setByDate] = useState(false);
   const [until, setUntil] = useState<ISODate | null>(null);
   const [openedAt] = useState(() => Date.now());
@@ -176,7 +187,8 @@ export function SupplyForm({
           if ("error" in resolved) return setError(resolved.error);
           quantity = resolved.value;
         }
-        const parsed = supplySchema.safeParse({ date, quantity });
+        // Pack id 0 is the stand-in for a medication whose packs are not loaded.
+        const parsed = supplySchema.safeParse({ date, quantity, packId: pack && pack.id > 0 ? pack.id : null });
         if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "输入无效");
         submit(() => onSubmit(parsed.data), onDone);
       }}
@@ -185,6 +197,29 @@ export function SupplyForm({
         <Label htmlFor={`${uid}-date`}>开药日期</Label>
         <DatePicker id={`${uid}-date`} label="开药日期" value={date} onChange={setDate} today={today} />
       </div>
+      {packs && packs.length > 1 && (
+        <div className="grid gap-2">
+          <span className="text-sm font-medium">厂家 / 包装</span>
+          <div role="radiogroup" aria-label="厂家 / 包装" className="flex flex-wrap gap-1.5">
+            {packs.map((p, i) => (
+              <button
+                key={p.id}
+                type="button"
+                role="radio"
+                aria-checked={p.id === packId}
+                onClick={() => choosePack(p)}
+                className={cn(
+                  "rounded-md border px-2.5 py-1 text-left text-sm transition-colors",
+                  p.id === packId ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted",
+                )}
+              >
+                {packLabel(p)}
+                {i === 0 && <span className="ml-1 text-xs opacity-70">默认</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <SupplyAmountInput
         id={`${uid}-qty`}
         label="数量"

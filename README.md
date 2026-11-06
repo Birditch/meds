@@ -8,8 +8,23 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
 - **Three pages** in the top navigation: **药品** (`/`, the medication cards and everything
   recorded on them), **就诊 · 住院** (`/visits`, the visit plan and the hospital stays) and
   **导出清单** (`/reports`, the PDF lists).
-- **Per medication**: name, brand (optional), dosage/strength, and how it is packed (盒 / 瓶 and
-  pills per pack, optional). Every remaining amount is also shown in packs, e.g. `合 6 瓶 14 颗`.
+- **Per medication**: one pill = a name and a strength (e.g. `氯硝西泮片 2mg`), with one stock,
+  regimen and reserve. It can come from **several manufacturers / brands (厂家 / 包装)**, each with
+  its own unit (盒 / 瓶) and pills per pack; they share the stock, every supply can record which one
+  was bought, and the default one (first) counts the boxes for a visit (the others' box counts are
+  shown next to it). Another strength (帕利哌酮缓释片 3mg / 6mg) is another medication; strengths of
+  the same drug sit next to each other on the board. Every remaining amount is also shown in packs,
+  e.g. `合 6 瓶 14 颗`.
+- **Duplicate check when adding**: typing a name looks up existing medications (name, brand,
+  pinyin, salt and dosage form aware: 盐酸普萘洛尔片 and 普萘洛尔片 are the same drug, 缓释片 is another
+  form) and offers to add the new one as a manufacturer of an existing medication or to go to its
+  supplies instead; creating it anyway asks for confirmation first.
+- **Tags (标签)**: a catalog of the categories a prescription depends on — 麻醉药品 / 第一类 / 第二类精神药品,
+  医疗用毒性 / 放射性 / 易制毒 / 含兴奋剂, 处方药 / 非处方药 (甲类 / 乙类), 医保甲 / 乙类 / 自费 / 门诊慢特病,
+  基药 / 集采 / 国谈 / 双通道, 进口 / 国产, 原研 / 仿制 / 过评, the antibacterial grades, storage and use
+  notes — plus your own. Tags of one kind exclude each other (精一 or 精二, Rx or OTC). They show on
+  the cards, filter the board, are searchable, and the visit PDF flags 麻 / 精一 / 精二 medications that
+  need a special prescription with a limited quantity.
 - **Supply logs**: `+N` pills on any date (whole or 0.5), counted before that day's morning dose;
   enter a pill count or packs × pills per pack plus loose pills from an opened pack, or **按日期**:
   pick the evening it should last to (default: the day before the next visit, with a chip for
@@ -25,8 +40,9 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   `他克莫司胶囊，普乐可复，1mg，每盒50颗，余 3盒12颗，储备 2盒，早1 晚1` or
   `阿托伐他汀钙片（立普妥） 20mg 7片×2板 剩 20 片`; amounts are stock unless a reserve word
   (储备 / 备用) comes first, and a bare number is read only right after 余 / 剩 / 储备. Lines
-  match existing medications by name, brand or pinyin (narrowed by dosage; another dosage is a
-  new medication). "填入当前清单" writes the current list in that format to edit and paste back.
+  match existing medications by name, any of their brands or pinyin (narrowed by dosage; another
+  dosage is a new medication); a known medication from a manufacturer not on file gets it as a new
+  manufacturer. "填入当前清单" writes the current list in that format to edit and paste back.
   A stock equal to the projection records nothing; a new medication's stock becomes a supply that
   day (plus the doses already taken by then). Medications without pills per pack are tagged
   **未写明每盒颗数** on the board, filterable, and in the import table. The form is saved as a
@@ -64,7 +80,7 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   included), so run-out dates and visit needs move back accordingly.
 - **Stock chart**: vertical jumps on refills, slope changes on regimen changes, a "today" line,
   visit lines, shaded hospital stays, history vs. projection, and a per-slot tooltip.
-- **Fuzzy search** over name, brand, dosage and their pinyin (full or initials: `ypb` → 药品B).
+- **Fuzzy search** over name, every brand, dosage, tags and their pinyin (full or initials: `ypb` → 药品B).
 - **No accounts**: the site sits behind Cloudflare Access; everyone let through shares one data set.
 
 Dates are written `yyyy.mm.dd 周X` throughout the UI (the JSON API uses ISO `YYYY-MM-DD`).

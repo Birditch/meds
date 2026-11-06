@@ -21,6 +21,8 @@ import {
   type MedicationStatus,
 } from "@/lib/meds/format";
 import { searchMedications } from "@/lib/meds/search";
+import { drugKey } from "@/lib/meds/similar";
+import { sortTags, tagLabel } from "@/lib/meds/tags";
 import type { MedicationRecord } from "@/lib/meds/types";
 import { cn } from "@/lib/utils";
 import { daysFromToday } from "@/lib/meds/visits";
@@ -29,7 +31,9 @@ import { DetailDialog } from "./detail-dialog";
 import { useHasImportDraft } from "./import-draft";
 import { AddSupplyDialog, CreateMedicationDialog, RegimenDialog, ReserveDialog } from "./medication-dialogs";
 import { PageTitle } from "./page-title";
+import { packLabel } from "./forms";
 import { StatusBadge, toneText } from "./status-badge";
+import { TONE_CLASS, TagBadges } from "./tags";
 import { useMeds, type MedsData } from "./use-meds";
 
 type Panel = { kind: "supply" | "regimen" | "reserve" | "detail"; id: number } | null;
@@ -55,6 +59,7 @@ export function Board(data: MedsData) {
   const [panel, setPanel] = useState<Panel>(null);
   const [query, setQuery] = useState("");
   const [onlyNoPerBox, setOnlyNoPerBox] = useState(false);
+  const [onlyTag, setOnlyTag] = useState<string | null>(null);
   const hasImportDraft = useHasImportDraft();
   const searchParams = useSearchParams();
   const tab: Tab = searchParams.get("tab") === "inactive" ? "inactive" : "active";
@@ -67,8 +72,18 @@ export function Board(data: MedsData) {
 
   const noPerBox = inTab.filter((m) => !m.perBox).length;
   const filterNoPerBox = onlyNoPerBox && noPerBox > 0;
-  const filtering = filterNoPerBox || query.trim() !== "";
-  const match = (list: MedicationRecord[]) => searchMedications(filterNoPerBox ? list.filter((m) => !m.perBox) : list, query);
+  // Every tag in use, with how many medications of this tab carry it.
+  const tagCounts = sortTags(medications.flatMap((m) => m.tags)).map((t) => [t, inTab.filter((m) => m.tags.includes(t)).length] as const);
+  const filterTag = onlyTag && medications.some((m) => m.tags.includes(onlyTag)) ? onlyTag : null;
+  const filtering = filterNoPerBox || filterTag !== null || query.trim() !== "";
+  const match = (list: MedicationRecord[]) =>
+    groupByDrug(
+      searchMedications(
+        list.filter((m) => (!filterNoPerBox || !m.perBox) && (!filterTag || m.tags.includes(filterTag))),
+        query,
+      ),
+      query.trim() === "",
+    );
   const matches = { active: match(taking), inactive: match(notTaking) };
   const shown = matches[tab];
   const other: Tab = tab === "active" ? "inactive" : "active";
@@ -158,6 +173,34 @@ export function Board(data: MedsData) {
         </div>
       )}
 
+      {tagCounts.length > 0 && (
+        <div className="-mt-2 flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="按标签筛选">
+          <span className="text-muted-foreground">标签</span>
+          {tagCounts.map(([t, n]) => {
+            const { short, label, tone } = tagLabel(t);
+            const on = filterTag === t;
+            return (
+              <button
+                key={t}
+                type="button"
+                aria-pressed={on}
+                title={label}
+                onClick={() => setOnlyTag(on ? null : t)}
+                className={cn(
+                  "inline-flex h-6 items-center gap-1 rounded-full border px-2.5 transition-colors",
+                  on ? TONE_CLASS[tone] : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  n === 0 && !on && "opacity-50",
+                )}
+              >
+                {short}
+                <span className="tabular-nums opacity-70">{n}</span>
+                {on && <XIcon className="size-3" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {noPerBox > 0 && (
         <div className="-mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <button
@@ -196,7 +239,7 @@ export function Board(data: MedsData) {
         <div className="grid place-items-center gap-3 rounded-xl border border-dashed py-12 text-center">
           <p className="text-sm text-muted-foreground">
             {filtering
-              ? `“${TAB_LABEL[tab]}”里${query.trim() ? `没有和“${query.trim()}”匹配的药品` : "没有符合筛选的药品"}${filterNoPerBox ? "（只看未写明每盒颗数的）" : ""}`
+              ? `“${TAB_LABEL[tab]}”里${query.trim() ? `没有和“${query.trim()}”匹配的药品` : "没有符合筛选的药品"}${filterNoPerBox ? "（只看未写明每盒颗数的）" : ""}${filterTag ? `（只看“${tagLabel(filterTag).label}”）` : ""}`
               : tab === "active"
                 ? "目前没有在吃的药。"
                 : "没有未在吃的药。把一种药的服用规律改成早、中、晚都是 0（停药），它就会归到这里。"}
@@ -214,6 +257,7 @@ export function Board(data: MedsData) {
                 onClick={() => {
                   setQuery("");
                   setOnlyNoPerBox(false);
+                  setOnlyTag(null);
                 }}
               >
                 清除搜索和筛选
@@ -238,7 +282,13 @@ export function Board(data: MedsData) {
         </div>
       )}
 
-      <CreateMedicationDialog open={creating} onOpenChange={setCreating} today={clock.date} />
+      <CreateMedicationDialog
+        open={creating}
+        onOpenChange={setCreating}
+        today={clock.date}
+        medications={medications}
+        onSupply={(id) => setPanel({ kind: "supply", id })}
+      />
       <BulkImportDialog open={importing} onOpenChange={setImporting} medications={medications} statuses={statuses} now={now} />
       <AddSupplyDialog medication={open("supply")} onOpenChange={close} today={clock.date} pauses={pauses} visits={upcoming} />
       <RegimenDialog medication={open("regimen")} onOpenChange={close} today={clock.date} />
@@ -253,6 +303,17 @@ export function Board(data: MedsData) {
       />
     </>
   );
+}
+
+/** Strengths of one drug next to each other, where the first of them is (when not ranked by a search). */
+function groupByDrug(list: MedicationRecord[], group: boolean): MedicationRecord[] {
+  if (!group) return list;
+  const groups = new Map<string, MedicationRecord[]>();
+  for (const m of list) {
+    const k = drugKey(m.name);
+    groups.set(k, [...(groups.get(k) ?? []), m]);
+  }
+  return [...groups.values()].flat();
 }
 
 const noPerBoxTag =
@@ -295,7 +356,9 @@ function MedicationCard({
     <Card className="gap-4">
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="text-lg">{medication.name}</CardTitle>
+          <CardTitle className="text-lg">
+            {medication.name} <span className="font-normal text-muted-foreground">{medication.dosage}</span>
+          </CardTitle>
           {intakeNote && (
             <Badge
               variant="outline"
@@ -311,10 +374,14 @@ function MedicationCard({
             </Badge>
           )}
         </div>
-        <CardDescription>
-          {[medication.brand, medication.dosage, medication.perBox && `${fmtQty(medication.perBox)} 颗/${medication.packUnit}`]
-            .filter(Boolean)
-            .join(" · ")}
+        <CardDescription className="grid gap-1.5">
+          <span>
+            {medication.packs.length > 1
+              ? `${medication.packs.length} 个厂家：${medication.packs.map(packLabel).join("；")}`
+              : [medication.brand, medication.perBox && `${fmtQty(medication.perBox)} 颗/${medication.packUnit}`].filter(Boolean).join(" · ") ||
+                "未写厂家和每盒颗数"}
+          </span>
+          <TagBadges tags={medication.tags} />
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3 text-sm">

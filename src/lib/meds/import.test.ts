@@ -76,6 +76,17 @@ describe("matchEntry", () => {
     expect(matchEntry(e("他克莫司", "5mg"), meds)).toEqual({ kind: "none", similar: [1, 2] });
     expect(matchEntry(e("硝苯地平"), meds)).toEqual({ kind: "none", similar: [] });
   });
+
+  it("knows every manufacturer of a medication", () => {
+    const withPacks: ImportCandidate[] = [
+      { id: 16, name: "氯硝西泮片", brand: "湖南洞庭", dosage: "2mg", packs: [{ brand: "湖南洞庭" }, { brand: "江苏恩华" }] },
+      { id: 18, name: "氯硝西泮片", brand: null, dosage: "0.5mg" },
+    ];
+    expect(matchEntry(e("江苏恩华"), withPacks)).toEqual({ kind: "match", id: 16 });
+    expect(matchEntry(e("氯硝西泮片", "2mg", "江苏恩华"), withPacks)).toEqual({ kind: "match", id: 16 });
+    // A manufacturer not on file still matches by name and strength (it becomes a new pack).
+    expect(matchEntry(e("氯硝西泮片", "2mg", "齐鲁"), withPacks)).toEqual({ kind: "match", id: 16 });
+  });
 });
 
 describe("resolveImportAmount", () => {

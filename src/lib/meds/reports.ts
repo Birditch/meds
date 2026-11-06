@@ -20,7 +20,8 @@ import {
   type MedicationStatus,
 } from "./format";
 import { dailyTotal, type Moment } from "./simulate";
-import type { MedicationRecord, StayRecord, VisitRecord } from "./types";
+import { isSpecialRx, tagDef, tagLabel } from "./tags";
+import type { MedicationRecord, PackRecord, StayRecord, VisitRecord } from "./types";
 import { scheduleVisits, spanText, type VisitNeed } from "./visits";
 
 export interface ReportInput {
@@ -54,22 +55,68 @@ function evaluate(input: ReportInput) {
   return { schedule, items: [...items.filter((it) => it.taking), ...items.filter((it) => !it.taking)] };
 }
 
-/** "盐酸鲁拉西酮片 · 罗舒达 · 40mg" */
-export const medicationLabel = (m: Pick<MedicationRecord, "name" | "brand" | "dosage">) =>
-  [m.name, m.brand, m.dosage].filter(Boolean).join(" · ");
+type Labelled = Pick<MedicationRecord, "name" | "brand" | "dosage"> & Partial<Pick<MedicationRecord, "packs">>;
+
+const brandsOf = (m: Labelled) => [...new Set((m.packs ?? [{ brand: m.brand }]).map((p) => p.brand).filter(Boolean))];
+
+/** "氯硝西泮片 2mg · 湖南洞庭 / 江苏恩华" */
+export const medicationLabel = (m: Labelled) => [`${m.name} ${m.dosage}`, brandsOf(m).join(" / ")].filter(Boolean).join(" · ");
 
 /** "7 颗/盒", or null when the pack size is unknown. */
 export const packSize = (m: Pick<MedicationRecord, "perBox" | "packUnit">) =>
   m.perBox ? `${fmtQty(m.perBox)} 颗/${m.packUnit}` : null;
 
-/** "2026.11.05 周四 购买 28 颗（4 盒）", newest last; packs only from one pack up. */
+/** Every pack: "湖南洞庭 每盒 14 颗；江苏恩华 每盒 20 颗". */
+export function packsText(m: MedicationRecord): string {
+  return m.packs
+    .map((p) => `${p.brand ? `${p.brand} ` : ""}${p.perBox ? `每${p.packUnit} ${fmtQty(p.perBox)} 颗` : `未写明每${p.packUnit}颗数`}`)
+    .join("；");
+}
+
+/** "精二 · 处方药" */
+export const tagsText = (m: Pick<MedicationRecord, "tags">) => m.tags.map((t) => tagLabel(t).short).join(" · ");
+
+/** The tags' full names, then what the special ones mean for the prescription. */
+export function tagLines(m: Pick<MedicationRecord, "tags">): string[] {
+  if (!m.tags.length) return [];
+  const notes = m.tags.flatMap((t) => (tagDef(t)?.note ? [`${tagLabel(t).label}：${tagDef(t)!.note}`] : []));
+  return [m.tags.map((t) => tagLabel(t).label).join("、"), ...notes];
+}
+
+export const specialRx = (m: Pick<MedicationRecord, "tags">) => isSpecialRx(m.tags);
+
+/** "精二": the special-prescription tags only. */
+export const specialRxText = (m: Pick<MedicationRecord, "tags">) =>
+  m.tags.filter((t) => isSpecialRx([t])).map((t) => tagLabel(t).short).join("、");
+
+/** The pack a supply was bought in, when recorded. */
+const packOf = (m: MedicationRecord, id: number | null): PackRecord | undefined => (id === null ? undefined : m.packs.find((p) => p.id === id));
+
+/** "2026.11.05 周四 购买 28 颗（4 盒 · 江苏恩华）", newest last; packs only from one pack up. */
 export function purchaseLines(m: MedicationRecord, today: ISODate): string[] {
   return [...m.supplies]
     .sort((a, b) => (a.date === b.date ? a.recordedAt - b.recordedAt : a.date < b.date ? -1 : 1))
     .map((s) => {
-      const packs = m.perBox && s.quantity >= m.perBox ? `（${fmtPacks(s.quantity, m.perBox, m.packUnit)}）` : "";
-      return `${fmtDate(s.date)} ${s.date > today ? "计划购买" : "购买"} ${fmtQty(s.quantity)} 颗${packs}`;
+      const p = packOf(m, s.packId) ?? m;
+      const parts = [
+        p.perBox && s.quantity >= p.perBox ? fmtPacks(s.quantity, p.perBox, p.packUnit) : null,
+        m.packs.length > 1 ? (packOf(m, s.packId)?.brand ?? null) : null,
+      ].filter(Boolean);
+      return `${fmtDate(s.date)} ${s.date > today ? "计划购买" : "购买"} ${fmtQty(s.quantity)} 颗${parts.length ? `（${parts.join(" · ")}）` : ""}`;
     });
+}
+
+/** The same need in the other manufacturers' packs: "或 江苏恩华 2 盒（40 颗）". */
+export function otherPacksText(need: Pick<VisitNeed, "need">, m: MedicationRecord): string | null {
+  if (need.need === 0) return null;
+  const others = m.packs.slice(1).filter((p) => p.perBox);
+  if (!others.length) return null;
+  return others
+    .map((p) => {
+      const n = Math.ceil(need.need / p.perBox! - 1e-9);
+      return `或 ${p.brand ?? "其他厂家"} ${n} ${p.packUnit}（${fmtQty(n * p.perBox!)} 颗）`;
+    })
+    .join("；");
 }
 
 /** "2026.11.07 周六 早上服药前盘点：剩 26 颗" */

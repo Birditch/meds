@@ -22,8 +22,10 @@ import type { MedicationRecord } from "@/lib/meds/types";
 import { visitOrdinal } from "@/lib/meds/visits";
 import { ConfirmDelete, RegimenTimeline, SupplyHistory } from "./history";
 import { EditMedicationForm, ReservePanel } from "./medication-dialogs";
+import { PacksPanel } from "./packs";
 import { StatusBadge, toneText } from "./status-badge";
 import { StockChart } from "./stock-chart";
+import { TagBadges } from "./tags";
 
 const momentLabel = ["今日服药前", "早上服药后", "中午服药后", "晚上服药后"] as const;
 
@@ -71,11 +73,19 @@ export function DetailDialog({
             <DialogHeader>
               <div className="flex items-start gap-2 pr-8">
                 <div className="grid gap-1">
-                  <DialogTitle className="text-xl">{medication.name}</DialogTitle>
-                  <DialogDescription>
-                    {[medication.brand, medication.dosage, medication.perBox && `${fmtQty(medication.perBox)} 颗/${medication.packUnit}`]
-                      .filter(Boolean)
-                      .join(" · ")}
+                  <DialogTitle className="text-xl">
+                    {medication.name} <span className="font-normal text-muted-foreground">{medication.dosage}</span>
+                  </DialogTitle>
+                  <DialogDescription asChild>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>{medication.packs.map((p) => p.brand ?? "未写厂家").join(" / ")}</span>
+                      <TagBadges tags={medication.tags} />
+                      {medication.tags.length === 0 && (
+                        <button type="button" className="text-xs underline-offset-4 hover:underline" onClick={() => toggle("edit")}>
+                          加标签
+                        </button>
+                      )}
+                    </div>
                   </DialogDescription>
                 </div>
                 <div className="ml-auto flex">
@@ -158,6 +168,8 @@ export function DetailDialog({
                 <ReservePanel key={medication.id} medication={medication} today={now.date} onDone={() => setPanel(null)} />
               </div>
             )}
+
+            <PacksPanel key={medication.id} medication={medication} />
 
             {status.shortfall && (
               <p className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">

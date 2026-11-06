@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isValidISODate } from "./dates";
+import { normalizeTags } from "./tags";
 import { PACK_UNITS } from "./types";
 
 const isHalfStep = (n: number) => Number.isInteger(n * 2);
@@ -40,15 +41,38 @@ export const perBoxSchema = z
   .refine(isHalfStep, "每盒/瓶颗数只能是整数或 0.5 的倍数")
   .nullable();
 
-export const medicationSchema = z.object({
-  name: text("药品名称").min(1, "请填写药品名称"),
-  brand: text("品牌").transform((v) => v || null),
-  dosage: text("含量/规格").min(1, "请填写含量/规格"),
+export const tagsSchema = z
+  .array(z.string().max(40, "标签太长"))
+  .max(30, "标签太多")
+  .transform((tags) => normalizeTags(tags));
+
+/** One manufacturer's / brand's pack of a medication. */
+export const packSchema = z.object({
+  brand: text("厂家/品牌").transform((v) => v || null),
   packUnit: z.enum(PACK_UNITS).default("盒"),
   perBox: perBoxSchema.default(null),
 });
 
-export const supplySchema = z.object({ date: dateSchema, quantity: quantitySchema });
+/** A medication with its default pack (brand / packUnit / perBox). */
+export const medicationSchema = packSchema.extend({
+  name: text("药品名称").min(1, "请填写药品名称"),
+  dosage: text("含量/规格").min(1, "请填写含量/规格"),
+  tags: tagsSchema.default([]),
+});
+
+/** What the edit form changes: the packs are edited one by one. */
+export const medicationInfoSchema = z.object({
+  name: text("药品名称").min(1, "请填写药品名称"),
+  dosage: text("含量/规格").min(1, "请填写含量/规格"),
+  tags: tagsSchema.default([]),
+});
+
+export const supplySchema = z.object({
+  date: dateSchema,
+  quantity: quantitySchema,
+  /** Which pack was bought; null = not recorded. */
+  packId: z.number().int().positive().nullable().default(null),
+});
 
 export const regimenSchema = z.object({
   effectiveFrom: dateSchema,
@@ -59,7 +83,7 @@ export const regimenSchema = z.object({
 
 export const createMedicationSchema = medicationSchema.extend({
   reserve: reserveSchema.default(0),
-  initialSupply: supplySchema.nullable(),
+  initialSupply: supplySchema.omit({ packId: true }).nullable(),
   initialRegimen: regimenSchema.nullable(),
 });
 
@@ -88,6 +112,8 @@ export const importSchema = z
           z.object({
             kind: z.literal("existing"),
             id: idSchema,
+            /** The pack the line is about (its unit / pills per pack are set), or a new one by brand. */
+            pack: z.union([z.object({ id: idSchema }), z.object({ brand: text("厂家/品牌").min(1, "请填写厂家/品牌") })]).nullable().default(null),
             packUnit: z.enum(PACK_UNITS),
             perBox: perBoxSchema,
             stock: countedSchema,
@@ -111,7 +137,9 @@ export const importSchema = z
   }, "同一种药出现了两次");
 
 export type MedicationFields = z.input<typeof medicationSchema>;
-export type SupplyFields = z.infer<typeof supplySchema>;
+export type MedicationInfoFields = z.input<typeof medicationInfoSchema>;
+export type PackFields = z.input<typeof packSchema>;
+export type SupplyFields = z.input<typeof supplySchema>;
 export type RegimenFields = z.infer<typeof regimenSchema>;
 export type StayFields = z.infer<typeof staySchema>;
 export type DrawFields = z.infer<typeof drawSchema>;

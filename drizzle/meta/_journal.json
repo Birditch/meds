@@ -29,6 +29,13 @@
       "when": 1793984110231,
       "tag": "0003_stock_counts",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793989110637,
+      "tag": "0004_medication_packs_tags",
+      "breakpoints": true
     }
   ]
 }

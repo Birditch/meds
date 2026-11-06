@@ -194,6 +194,8 @@ export interface ImportCandidate {
   dosage: string;
   /** Pinyin keys (full and initials) of the name and brand. */
   searchKeys?: readonly string[];
+  /** Every manufacturer / brand (packs); `brand` is the default one. */
+  packs?: readonly { brand: string | null }[];
 }
 
 export type ImportMatch =
@@ -203,8 +205,9 @@ export type ImportMatch =
   /** No medication fits; `similar` share the name but not the dosage. */
   | { kind: "none"; similar: number[] };
 
-const key = (s: string | null | undefined) =>
+export const key = (s: string | null | undefined) =>
   (s ?? "").normalize("NFKC").toLowerCase().replace(/[\s()（）·・\-_/]/g, "");
+const brandsOf = (m: ImportCandidate) => (m.packs ?? [{ brand: m.brand }]).map((p) => key(p.brand)).filter(Boolean);
 
 /**
  * The existing medication a line is about: same name (or brand, or pinyin), then narrowed by
@@ -217,7 +220,7 @@ export function matchEntry(entry: Pick<ImportEntry, "name" | "brand" | "dosage">
   const contains = (a: string, b: string) => a.length >= 2 && b.length >= 2 && (a.includes(b) || b.includes(a));
   const tiers = [
     (m: ImportCandidate) => key(m.name) === k,
-    (m: ImportCandidate) => key(m.brand) === k,
+    (m: ImportCandidate) => brandsOf(m).includes(k),
     (m: ImportCandidate) => contains(key(m.name), k),
     (m: ImportCandidate) => (m.searchKeys ?? []).some((s) => key(s) === k),
   ];
@@ -240,7 +243,7 @@ export function matchEntry(entry: Pick<ImportEntry, "name" | "brand" | "dosage">
   }
   if (found.length > 1 && entry.brand) {
     const b = key(entry.brand);
-    const same = found.filter((m) => key(m.brand) === b);
+    const same = found.filter((m) => brandsOf(m).includes(b));
     if (same.length) found = same;
   }
   return found.length === 1 ? { kind: "match", id: found[0].id } : { kind: "ambiguous", ids: found.map((m) => m.id) };

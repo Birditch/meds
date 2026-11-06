@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { fmtDate, wallClock } from "@/lib/meds/dates";
 import { COUNT_MOMENT_LABEL, fmtQty, formatRegimenShort, packNote, type MedicationStatus } from "@/lib/meds/format";
 import {
+  key,
   importTemplate,
   matchEntry,
   parseImportText,
@@ -34,7 +35,7 @@ import { PACK_UNITS, type MedicationRecord, type PackUnit } from "@/lib/meds/typ
 import { importSchema, medicationSchema, perBoxSchema, type ImportFields } from "@/lib/meds/validation";
 import { cn } from "@/lib/utils";
 import { DatePicker } from "./date-picker";
-import { FormError, SubmitButton, useActionForm } from "./forms";
+import { FormError, SubmitButton, packLabel, useActionForm } from "./forms";
 import { clearImportDraft, loadImportDraft, saveImportDraft } from "./import-draft";
 
 type Amount = { boxes: string; loose: string };
@@ -44,6 +45,11 @@ interface Row {
   key: string;
   /** Existing medication, or null for a new one. */
   medId: number | null;
+  /**
+   * Existing medication: the pack (manufacturer) the pack size and boxes refer to, or "new" =
+   * add `brand` as another manufacturer of it. null for a new medication.
+   */
+  pack?: number | "new" | null;
   name: string;
   brand: string;
   dosage: string;
@@ -80,6 +86,7 @@ function existingRow(m: MedicationRecord): Row {
   return {
     key: `med-${m.id}`,
     medId: m.id,
+    pack: m.packs[0]?.id ?? null,
     name: m.name,
     brand: m.brand ?? "",
     dosage: m.dosage,
@@ -99,6 +106,7 @@ function newRow(e?: ImportEntry, notes: string[] = [], choices: number[] = []): 
   return {
     key: nextKey(),
     medId: null,
+    pack: null,
     name: e?.name ?? "",
     brand: e?.brand ?? "",
     dosage: e?.dosage ?? "",
@@ -122,7 +130,9 @@ function restoreRows(saved: Row[], medications: MedicationRecord[]): Row[] {
     .map((r) => {
       const m = r.medId === null ? null : byId.get(r.medId)!;
       const choices = (r.choices ?? []).filter((id) => byId.has(id));
-      return m ? { ...r, name: m.name, brand: m.brand ?? "", dosage: m.dosage, choices } : { ...r, choices };
+      if (!m) return { ...r, choices };
+      const pack = r.pack === "new" ? null : (m.packs.find((p) => p.id === r.pack) ?? m.packs[0]);
+      return { ...r, name: m.name, dosage: m.dosage, choices, ...(pack ? { pack: pack.id, brand: pack.brand ?? "" } : {}) };
     });
   // New-row keys continue after the restored ones.
   for (const r of kept) seq = Math.max(seq, Number(/^row-(\d+)$/.exec(r.key)?.[1] ?? 0));
@@ -134,6 +144,18 @@ function savedAtText(ms: number) {
   const { date, minutes } = wallClock(new Date(ms));
   return `${fmtDate(date)} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
+
+/** The row's pack, from the brand a line names: one of the medication's, or a new manufacturer. */
+function switchPack(row: Row, med: MedicationRecord, brand: string): Row {
+  const b = key(brand);
+  if (!b) return row;
+  const p = med.packs.find((x) => key(x.brand) === b);
+  if (p) return { ...row, pack: p.id, brand: p.brand ?? "", packUnit: p.packUnit, perBox: p.perBox ? String(p.perBox) : "" };
+  return { ...row, pack: "new", brand: brand.trim(), perBox: "" };
+}
+
+/** The pack an existing row is about (undefined for a new manufacturer). */
+const rowPack = (row: Row, med: MedicationRecord) => (row.pack === "new" ? undefined : (med.packs.find((p) => p.id === row.pack) ?? med.packs[0]));
 
 /** Values read for a medication override what the row had. */
 function fill(row: Row, from: Pick<Row, "readUnit" | "perBox" | "stock" | "reserve" | "doses" | "line">, notes: string[]): Row {
@@ -188,15 +210,19 @@ function build(row: Row, med: MedicationRecord | undefined, at: Moment, expected
     if (regimen && current && sameDose(regimen, current)) regimen = null;
     if (regimen && !current && sameDose(regimen, { morning: 0, noon: 0, evening: 0 })) regimen = null;
     const count = stock.value !== null && stock.value !== expected ? stock.value : null;
+    const target = rowPack(row, med);
+    if (!target && !row.brand.trim()) return fail("请填写新厂家 / 品牌");
     const changed =
       count !== null ||
       (reserve.value !== null && reserve.value !== med.reserve) ||
-      perBox !== med.perBox ||
-      row.packUnit !== med.packUnit ||
+      !target ||
+      perBox !== target.perBox ||
+      row.packUnit !== target.packUnit ||
       regimen !== null;
     if (!changed) return { item: null, error: null, ...counted };
+    const pack = !target ? { brand: row.brand.trim() } : target.id > 0 ? { id: target.id } : null;
     return {
-      item: { kind: "existing", id: med.id, packUnit: row.packUnit, perBox, stock: count, reserve: reserve.value, regimen },
+      item: { kind: "existing", id: med.id, pack, packUnit: row.packUnit, perBox, stock: count, reserve: reserve.value, regimen },
       error: null,
       ...counted,
     };
@@ -325,6 +351,11 @@ function BulkImportForm({
         if (before) notes.push(`和第 ${before} 行是同一种药，按本行录入`);
         seen.set(match.id, e.line);
         const i = next.findIndex((r) => r.medId === match.id);
+        const med = medications.find((m) => m.id === match.id)!;
+        if (e.brand) {
+          next[i] = switchPack(next[i], med, e.brand);
+          if (next[i].pack === "new") notes.push(`“${e.brand}”是这种药的新厂家，录入时会加为它的一个厂家（共用余量）`);
+        }
         const read = newRow(e);
         // A regimen the line repeats unchanged is not a change.
         const current = regimenAt(medications.find((m) => m.id === match.id)!.regimens, at.date);
@@ -350,7 +381,12 @@ function BulkImportForm({
       if (!from) return rs;
       return rs
         .filter((r) => r.key !== key)
-        .map((r) => (r.medId === medId ? fill(r, from, from.notes.filter((n) => !n.includes("新药") && !n.includes("选一种"))) : r));
+        .map((r) => {
+          if (r.medId !== medId) return r;
+          const med = medications.find((m) => m.id === medId);
+          const target = med && from.brand.trim() ? switchPack(r, med, from.brand) : r;
+          return fill(target, from, from.notes.filter((n) => !n.includes("新药") && !n.includes("选一种")));
+        });
     });
 
   const template = () =>
@@ -623,6 +659,7 @@ function RowEditor({
   onReset: () => void;
 }) {
   const uid = useId();
+  const target = med ? rowPack(row, med) : undefined;
   const perBox = Number(row.perBox) > 0 ? Number(row.perBox) : null;
   const pack = { perBox, packUnit: row.packUnit };
   const changed = !!built.item;
@@ -663,7 +700,28 @@ function RowEditor({
         {med ? (
           <>
             <span className="font-medium">{med.name}</span>
-            <span className="text-xs text-muted-foreground">{[med.brand, med.dosage].filter(Boolean).join(" · ")}</span>
+            <span className="text-xs text-muted-foreground">{med.dosage}</span>
+            {med.packs.length > 1 || row.pack === "new" ? (
+              <select
+                aria-label="厂家 / 包装"
+                className="h-7 max-w-full rounded-md border border-input bg-transparent px-1.5 text-xs dark:bg-input/30"
+                value={String(row.pack ?? med.packs[0]?.id)}
+                onChange={(e) => {
+                  const p = med.packs.find((x) => String(x.id) === e.target.value);
+                  if (p) onChange({ pack: p.id, brand: p.brand ?? "", packUnit: p.packUnit, perBox: p.perBox ? String(p.perBox) : "" });
+                }}
+              >
+                {med.packs.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {packLabel(p)}
+                  </option>
+                ))}
+                {row.pack === "new" && <option value="new">新厂家：{row.brand}</option>}
+              </select>
+            ) : (
+              med.brand && <span className="text-xs text-muted-foreground">{med.brand}</span>
+            )}
+            {row.pack === "new" && <Badge variant="outline">新增厂家</Badge>}
           </>
         ) : (
           <Badge>新增药品</Badge>
@@ -751,9 +809,9 @@ function RowEditor({
             />
             <span className="text-muted-foreground">颗</span>
           </div>
-          {med && perBox !== med.perBox && (
+          {target && perBox !== target.perBox && (
             <div className="text-xs text-muted-foreground tabular-nums">
-              原 {med.perBox ? `${fmtQty(med.perBox)} 颗/${med.packUnit}` : "未写明"}
+              原 {target.perBox ? `${fmtQty(target.perBox)} 颗/${target.packUnit}` : "未写明"}
             </div>
           )}
         </div>

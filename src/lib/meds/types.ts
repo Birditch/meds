@@ -7,6 +7,8 @@ export interface SupplyRecord {
   id: number;
   date: ISODate;
   quantity: number;
+  /** The pack bought (which manufacturer), when recorded. */
+  packId: number | null;
   /** When it was entered (ms since epoch): a supply entered after a same-day count comes on top of it. */
   recordedAt: number;
 }
@@ -28,21 +30,40 @@ export interface RegimenRecord {
   evening: number;
 }
 
+/** One way a medication comes: a manufacturer's / brand's pack. */
+export interface PackRecord {
+  id: number;
+  /** Manufacturer or brand (厂家 / 品牌), or null. */
+  brand: string | null;
+  packUnit: PackUnit;
+  /** Pills per pack, or null when not entered. */
+  perBox: number | null;
+}
+
+/**
+ * One medication is one pill: a name and a strength, with one stock. It can come from several
+ * manufacturers (packs); another strength of the same drug is another medication.
+ */
 export interface MedicationRecord {
   id: number;
   name: string;
+  /** brand / packUnit / perBox are the default pack's (packs[0]). */
   brand: string | null;
   dosage: string;
   /** How it is packed: 盒 or 瓶. */
   packUnit: PackUnit;
   /** Pills per pack (box / bottle), or null when not entered. */
   perBox: number | null;
+  /** Every pack, the default first. */
+  packs: PackRecord[];
   /** Extra pills kept at home, outside the stock simulation. */
   reserve: number;
+  /** Catalog tag codes (src/lib/meds/tags.ts) and the user's own tags, in display order. */
+  tags: string[];
   supplies: SupplyRecord[];
   counts: CountRecord[];
   regimens: RegimenRecord[];
-  /** Pinyin of name and brand (full and initials), computed on the server for fuzzy search. */
+  /** Pinyin of name and every brand (full and initials) and the tags' names, for fuzzy search. */
   searchKeys: string[];
 }
 

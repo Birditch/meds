@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   gapWarning,
+  medicationLabel,
+  otherPacksText,
   needReason,
   needText,
   purchaseLines,
@@ -25,8 +27,10 @@ const med = (
   dosage: "10mg",
   packUnit: "盒",
   perBox,
+  packs: [{ id: 1, brand: null, packUnit: "盒", perBox }],
   reserve,
-  supplies: supplies.map(([date, quantity]) => ({ id: nextId++, date, quantity, recordedAt: 0 })),
+  tags: [],
+  supplies: supplies.map(([date, quantity]) => ({ id: nextId++, date, quantity, packId: null, recordedAt: 0 })),
   counts: [],
   regimens: [{ id: nextId++, effectiveFrom: "2026-11-01", morning: daily === 2 ? 1 : 0, noon: 0, evening: 1 }],
   searchKeys: [],
@@ -87,10 +91,10 @@ describe("visit list", () => {
   it("lists every supply as a purchase", () => {
     expect(purchaseLines(A, NOW.date)).toEqual(["2026.11.01 周日 购买 70 颗（5 盒）"]);
     // Less than a box: no pack count.
-    expect(purchaseLines({ ...A, supplies: [{ id: 98, date: "2026-11-02", quantity: 10, recordedAt: 0 }] }, NOW.date)).toEqual([
+    expect(purchaseLines({ ...A, supplies: [{ id: 98, date: "2026-11-02", quantity: 10, packId: null, recordedAt: 0 }] }, NOW.date)).toEqual([
       "2026.11.02 周一 购买 10 颗",
     ]);
-    const planned = { ...C, supplies: [...C.supplies, { id: 99, date: "2026-11-20", quantity: 30, recordedAt: 0 }] };
+    const planned = { ...C, supplies: [...C.supplies, { id: 99, date: "2026-11-20", quantity: 30, packId: null, recordedAt: 0 }] };
     expect(purchaseLines(planned, NOW.date)).toEqual(["2026.11.01 周日 购买 200 颗", "2026.11.20 周五 计划购买 30 颗"]);
   });
 });
@@ -156,4 +160,28 @@ describe("pdf", () => {
     expect(pages(stock)).toBeGreaterThan(2);
     expect(pages(reserve)).toBeGreaterThanOrEqual(1);
   }, 30_000);
+});
+
+describe("manufacturers and tags", () => {
+  const M: MedicationRecord = {
+    ...med("氯硝西泮片", { perBox: 14 }),
+    dosage: "2mg",
+    brand: "湖南洞庭",
+    packs: [
+      { id: 7, brand: "湖南洞庭", packUnit: "盒", perBox: 14 },
+      { id: 8, brand: "江苏恩华", packUnit: "盒", perBox: 20 },
+    ],
+    tags: ["psy2", "rx"],
+    supplies: [{ id: 1, date: "2026-11-02", quantity: 40, packId: 8, recordedAt: 0 }],
+  };
+
+  it("names every manufacturer and the one each purchase came from", () => {
+    expect(medicationLabel(M)).toBe("氯硝西泮片 2mg · 湖南洞庭 / 江苏恩华");
+    expect(purchaseLines(M, NOW.date)).toEqual(["2026.11.02 周一 购买 40 颗（2 盒 · 江苏恩华）"]);
+  });
+
+  it("counts the need in the other manufacturers' boxes too", () => {
+    expect(otherPacksText({ need: 26 }, M)).toBe("或 江苏恩华 2 盒（40 颗）");
+    expect(otherPacksText({ need: 0 }, M)).toBeNull();
+  });
 });
