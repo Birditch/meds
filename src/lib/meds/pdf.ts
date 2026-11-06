@@ -448,7 +448,7 @@ export async function renderReservePdf(r: ReserveReport, ctx: RenderContext): Pr
 
   if (r.empty.length) {
     w.section(`无储备（${r.empty.length} 种）`);
-    w.paragraph(r.empty.map(medicationLabel).join("、"));
+    w.paragraph(r.empty.map((m, i) => `${i + 1}. ${medicationLabel(m)}`).join("\n"));
   }
   return w.finish();
 }
