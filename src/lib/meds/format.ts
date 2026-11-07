@@ -7,6 +7,7 @@ import {
   fullDays,
   isExhaustedAt,
   nextShortfall,
+  packBalancesAt,
   regimenAt,
   simulate,
   type CountInput,
@@ -20,6 +21,7 @@ import {
   type Simulation,
   type SupplyInput,
 } from "./simulate";
+import type { MedicationRecord, PackRecord } from "./types";
 import { planHorizon, planVisits, type VisitPlan, type VisitSchedule } from "./visits";
 
 /** When a stock count was taken, by how many of the day's doses were behind it. */
@@ -211,6 +213,8 @@ export interface MedicationStatus<R extends RegimenInput = RegimenInput> {
   sim: Simulation;
   current: R | null;
   balanceNow: number;
+  /** Each pack's share of `balanceNow`, in the `packs` order given ([] without). */
+  byPack: number[];
   conclusion: Conclusion;
   shortfall: Shortfall | null;
   plan: VisitPlan;
@@ -223,6 +227,8 @@ export interface StatusOptions {
   perBox?: number | null;
   /** Stock counts: the stock is what was counted, from that moment on. */
   counts?: readonly CountInput[];
+  /** Pack ids, default first: each keeps its own balance (see simulate). */
+  packs?: readonly number[];
 }
 
 export function medicationStatus<R extends RegimenInput>(
@@ -230,18 +236,44 @@ export function medicationStatus<R extends RegimenInput>(
   regimens: readonly R[],
   now: Moment,
   schedule: readonly VisitSchedule[] = [],
-  { pauses = [], perBox = null, counts = [] }: StatusOptions = {},
+  { pauses = [], perBox = null, counts = [], packs = [] }: StatusOptions = {},
 ): MedicationStatus<R> {
-  const sim = simulate(supplies, regimens, { today: now.date, until: planHorizon(schedule), pauses, counts });
+  const sim = simulate(supplies, regimens, { today: now.date, until: planHorizon(schedule), pauses, counts, packs });
   return {
     sim,
     current: regimenAt(regimens, now.date),
     balanceNow: balanceAt(sim, now),
+    byPack: packBalancesAt(sim, now),
     conclusion: conclude(sim, now),
     shortfall: nextShortfall(sim, now),
     plan: planVisits(sim, schedule, now, perBox),
   };
 }
+
+/** medicationStatus of a stored medication: its supplies, counts and packs. */
+export function statusOf(
+  m: Pick<MedicationRecord, "supplies" | "regimens" | "counts" | "packs" | "perBox">,
+  now: Moment,
+  schedule: readonly VisitSchedule[],
+  pauses: readonly DateRange[],
+): MedicationStatus<MedicationRecord["regimens"][number]> {
+  return medicationStatus(m.supplies, m.regimens, now, schedule, {
+    pauses,
+    perBox: m.perBox,
+    counts: m.counts,
+    packs: m.packs.map((p) => p.id),
+  });
+}
+
+/** Each pack with its stock now and its reserve, default first. */
+export function packShares(m: Pick<MedicationRecord, "packs">, status: Pick<MedicationStatus, "byPack" | "balanceNow">) {
+  return m.packs.map((pack, i) => ({
+    pack,
+    stock: m.packs.length === 1 ? status.balanceNow : (status.byPack[i] ?? 0),
+    reserve: pack.reserve,
+  }));
+}
+export type PackShare = { pack: PackRecord; stock: number; reserve: number };
 
 /** 84 → "3 盒", 94 → "3 盒 10 颗", 10 → "10 颗" (28 a box); plain pills when the pack size is unknown. */
 export function fmtPacks(pills: number, perBox: number | null | undefined, unit: string = "盒"): string {

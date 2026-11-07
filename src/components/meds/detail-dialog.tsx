@@ -15,6 +15,7 @@ import {
   fmtQty,
   formatRegimen,
   packNote,
+  packShares,
   type MedicationStatus,
 } from "@/lib/meds/format";
 import type { DateRange, Moment } from "@/lib/meds/simulate";
@@ -22,7 +23,7 @@ import type { MedicationRecord } from "@/lib/meds/types";
 import { visitOrdinal } from "@/lib/meds/visits";
 import { ConfirmDelete, RegimenTimeline, SupplyHistory } from "./history";
 import { EditMedicationForm, ReservePanel } from "./medication-dialogs";
-import { PacksPanel } from "./packs";
+import { PackAmounts, PacksPanel } from "./packs";
 import { StatusBadge, toneText } from "./status-badge";
 import { StockChart } from "./stock-chart";
 import { TagBadges } from "./tags";
@@ -58,6 +59,8 @@ export function DetailDialog({
   const [panel, setPanel] = useState<"edit" | "reserve" | null>(null);
   const toggle = (p: "edit" | "reserve") => setPanel((v) => (v === p ? null : p));
   const lastCount = medication?.counts.filter((c) => c.date <= now.date).at(-1) ?? null;
+  const multi = (medication?.packs.length ?? 0) > 1;
+  const shares = medication && status ? packShares(medication, status) : [];
 
   return (
     <Dialog
@@ -120,11 +123,17 @@ export function DetailDialog({
                 label="当前剩余"
                 sub={
                   <>
-                    {packNote(status.balanceNow, medication) && <div>{packNote(status.balanceNow, medication)}</div>}
+                    {multi ? (
+                      <PackAmounts shares={shares} of="stock" className="grid" />
+                    ) : (
+                      packNote(status.balanceNow, medication) && <div>{packNote(status.balanceNow, medication)}</div>
+                    )}
                     {fmtDate(now.date)} · {momentLabel[now.slotsDone]}
                     {lastCount && (
                       <div>
-                        按 {fmtDate(lastCount.date)} {COUNT_MOMENT_LABEL[lastCount.slotsDone]}盘点的 {fmtQty(lastCount.quantity)} 颗推算
+                        按 {fmtDate(lastCount.date)} {COUNT_MOMENT_LABEL[lastCount.slotsDone]}盘点
+                        {multi && lastCount.packId ? `（${medication.packs.find((p) => p.id === lastCount.packId)?.brand ?? "未写厂家"}）` : ""}的{" "}
+                        {fmtQty(lastCount.quantity)} 颗推算
                       </div>
                     )}
                   </>
@@ -144,7 +153,11 @@ export function DetailDialog({
                 </div>
                 <div className="text-base font-semibold tabular-nums">{fmtQty(medication.reserve)} 颗</div>
                 <div className="text-xs text-muted-foreground">
-                  {packNote(medication.reserve, medication) && <div>{packNote(medication.reserve, medication)}</div>}
+                  {multi ? (
+                    <PackAmounts shares={shares} of="reserve" className="grid" />
+                  ) : (
+                    packNote(medication.reserve, medication) && <div>{packNote(medication.reserve, medication)}</div>
+                  )}
                   {describeReserve(medication.reserve, status.current)}
                 </div>
               </div>
@@ -169,7 +182,7 @@ export function DetailDialog({
               </div>
             )}
 
-            <PacksPanel key={medication.id} medication={medication} />
+            <PacksPanel key={medication.id} medication={medication} status={status} />
 
             {status.shortfall && (
               <p className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">

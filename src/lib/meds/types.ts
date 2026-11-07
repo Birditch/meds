@@ -20,6 +20,8 @@ export interface CountRecord {
   slotsDone: 0 | 1 | 2 | 3;
   quantity: number;
   recordedAt: number;
+  /** The pack counted, or null for all of the medication's packs together. */
+  packId: number | null;
 }
 
 export interface RegimenRecord {
@@ -38,11 +40,14 @@ export interface PackRecord {
   packUnit: PackUnit;
   /** Pills per pack, or null when not entered. */
   perBox: number | null;
+  /** This pack's pills kept aside as a reserve. */
+  reserve: number;
 }
 
 /**
- * One medication is one pill: a name and a strength, with one stock. It can come from several
- * manufacturers (packs); another strength of the same drug is another medication.
+ * One medication is one pill: a name and a strength. It can come from several manufacturers
+ * (packs), each with its own stock and reserve, taken one after the other (the default first);
+ * another strength of the same drug is another medication.
  */
 export interface MedicationRecord {
   id: number;
@@ -56,7 +61,7 @@ export interface MedicationRecord {
   perBox: number | null;
   /** Every pack, the default first. */
   packs: PackRecord[];
-  /** Extra pills kept at home, outside the stock simulation. */
+  /** Extra pills kept at home, outside the stock simulation: every pack's reserve added up. */
   reserve: number;
   /** Catalog tag codes (src/lib/meds/tags.ts) and the user's own tags, in display order. */
   tags: string[];

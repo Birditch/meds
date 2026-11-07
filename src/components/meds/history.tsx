@@ -187,12 +187,17 @@ export function SupplyHistory({
 }
 
 function CountRow({ count, medication }: { count: CountRecord; medication: MedicationRecord }) {
-  const note = packNote(count.quantity, medication);
+  const pack = medication.packs.length > 1 && count.packId ? medication.packs.find((p) => p.id === count.packId) : undefined;
+  const note = packNote(count.quantity, pack ?? medication);
+  const whose = medication.packs.length > 1 ? (pack ? (pack.brand ?? "未写厂家") : "全部厂家") : null;
   return (
     <li className="flex items-center gap-3 px-3 py-2">
       <span className="tabular-nums">{fmtDate(count.date)}</span>
       <Badge variant="secondary">盘点</Badge>
-      <span className="text-xs text-muted-foreground">{COUNT_MOMENT_LABEL[count.slotsDone]}</span>
+      <span className="text-xs text-muted-foreground">
+        {COUNT_MOMENT_LABEL[count.slotsDone]}
+        {whose && ` · ${whose}`}
+      </span>
       <span className="ml-auto grid justify-items-end tabular-nums">
         <span className="font-medium">剩 {fmtQty(count.quantity)} 颗</span>
         {note && <span className="text-xs text-muted-foreground">{note}</span>}

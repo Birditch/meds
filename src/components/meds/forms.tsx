@@ -76,6 +76,46 @@ function untilChoices(from: ISODate, visits: readonly ISODate[]): { label: strin
   return choices;
 }
 
+/** Which manufacturer / pack (shown when there is more than one). `note` adds e.g. its stock. */
+export function PackPicker({
+  packs,
+  value,
+  onChange,
+  label = "厂家 / 包装",
+  note,
+}: {
+  packs: readonly PackRecord[];
+  value: number | null;
+  onChange: (pack: PackRecord) => void;
+  label?: string;
+  note?: (pack: PackRecord) => ReactNode;
+}) {
+  return (
+    <div className="grid gap-2">
+      <span className="text-sm font-medium">{label}</span>
+      <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
+        {packs.map((p, i) => (
+          <button
+            key={p.id}
+            type="button"
+            role="radio"
+            aria-checked={p.id === value}
+            onClick={() => onChange(p)}
+            className={cn(
+              "rounded-md border px-2.5 py-1 text-left text-sm transition-colors",
+              p.id === value ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted",
+            )}
+          >
+            {packLabel(p)}
+            {i === 0 && <span className="ml-1 text-xs opacity-70">默认</span>}
+            {note && <span className="block text-xs tabular-nums opacity-80">{note(p)}</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function SupplyForm({
   today,
   initial,
@@ -117,7 +157,7 @@ export function SupplyForm({
 
   const needed = useMemo(() => {
     if (!med || !byDate) return null;
-    const options = { pauses, counts: med.counts };
+    const options = { pauses, counts: med.counts, packs: med.packs.map((p) => p.id) };
     const quantity = supplyToLast(med.supplies, med.regimens, { date, recordedAt: openedAt }, end, options);
     const have = balanceAt(simulate(med.supplies, med.regimens, { ...options, until: end, maxYears: 0 }), { date, slotsDone: 0 });
     return { quantity, have };
@@ -197,29 +237,7 @@ export function SupplyForm({
         <Label htmlFor={`${uid}-date`}>开药日期</Label>
         <DatePicker id={`${uid}-date`} label="开药日期" value={date} onChange={setDate} today={today} />
       </div>
-      {packs && packs.length > 1 && (
-        <div className="grid gap-2">
-          <span className="text-sm font-medium">厂家 / 包装</span>
-          <div role="radiogroup" aria-label="厂家 / 包装" className="flex flex-wrap gap-1.5">
-            {packs.map((p, i) => (
-              <button
-                key={p.id}
-                type="button"
-                role="radio"
-                aria-checked={p.id === packId}
-                onClick={() => choosePack(p)}
-                className={cn(
-                  "rounded-md border px-2.5 py-1 text-left text-sm transition-colors",
-                  p.id === packId ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted",
-                )}
-              >
-                {packLabel(p)}
-                {i === 0 && <span className="ml-1 text-xs opacity-70">默认</span>}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {packs && packs.length > 1 && <PackPicker packs={packs} value={packId} onChange={choosePack} />}
       <SupplyAmountInput
         id={`${uid}-qty`}
         label="数量"

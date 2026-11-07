@@ -17,6 +17,7 @@ import {
   intakeLabel,
   isTaking,
   packNote,
+  packShares,
   type Intake,
   type MedicationStatus,
 } from "@/lib/meds/format";
@@ -32,6 +33,7 @@ import { useHasImportDraft } from "./import-draft";
 import { AddSupplyDialog, CreateMedicationDialog, RegimenDialog, ReserveDialog } from "./medication-dialogs";
 import { PageTitle } from "./page-title";
 import { packLabel } from "./forms";
+import { PackAmounts } from "./packs";
 import { StatusBadge, toneText } from "./status-badge";
 import { TONE_CLASS, TagBadges } from "./tags";
 import { useMeds, type MedsData } from "./use-meds";
@@ -347,6 +349,9 @@ function MedicationCard({
 }) {
   const { conclusion, shortfall } = status;
   const next = status.plan.visits[0];
+  // Several manufacturers: each one's stock and reserve under the total (their boxes differ).
+  const multi = medication.packs.length > 1;
+  const shares = packShares(medication, status);
   const balanceNote = packNote(status.balanceNow, medication);
   const reserveNote = packNote(medication.reserve, medication);
   // The status box already says 已停药 / 未设规律: the badge adds when.
@@ -388,7 +393,7 @@ function MedicationCard({
         <Row label="当前规律">{formatRegimen(status.current)}</Row>
         <Row label="今日当前剩余">
           <span className="text-xl font-semibold">{fmtQty(status.balanceNow)} 颗</span>
-          {balanceNote && <span className="text-xs text-muted-foreground">{balanceNote}</span>}
+          {multi ? <PackAmounts shares={shares} of="stock" /> : balanceNote && <span className="text-xs text-muted-foreground">{balanceNote}</span>}
         </Row>
         <div className="grid gap-1.5 rounded-lg bg-muted/50 p-3">
           <div className="flex items-center justify-between gap-2">
@@ -400,7 +405,7 @@ function MedicationCard({
         </div>
         <Row label="药物储备">
           <span>{fmtQty(medication.reserve)} 颗</span>
-          {reserveNote && <span className="text-xs text-muted-foreground">{reserveNote}</span>}
+          {multi ? <PackAmounts shares={shares} of="reserve" /> : reserveNote && <span className="text-xs text-muted-foreground">{reserveNote}</span>}
           {medication.reserve > 0 && (
             <span className="text-xs text-muted-foreground">{describeReserve(medication.reserve, status.current)}</span>
           )}

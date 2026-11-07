@@ -14,14 +14,14 @@ export async function listMedications(): Promise<MedicationRecord[]> {
     db.select().from(medications).orderBy(asc(medications.id)),
     db.select().from(medicationPacks).orderBy(asc(medicationPacks.position), asc(medicationPacks.id)),
     db.select().from(supplyLogs).orderBy(asc(supplyLogs.date), asc(supplyLogs.id)),
-    db.select().from(stockCounts).orderBy(asc(stockCounts.date)),
+    db.select().from(stockCounts).orderBy(asc(stockCounts.date), asc(stockCounts.createdAt)),
     db.select().from(dosageRegimens).orderBy(asc(dosageRegimens.effectiveFrom)),
   ]);
 
   const packsOf = new Map<number, PackRecord[]>();
   for (const p of packs) {
     const list = packsOf.get(p.medicationId) ?? [];
-    list.push({ id: p.id, brand: p.brand, packUnit: p.packUnit, perBox: p.perBox });
+    list.push({ id: p.id, brand: p.brand, packUnit: p.packUnit, perBox: p.perBox, reserve: p.reserve });
     packsOf.set(p.medicationId, list);
   }
 
@@ -29,7 +29,7 @@ export async function listMedications(): Promise<MedicationRecord[]> {
     meds.map((m) => {
       // Every medication has a pack since migration 0004; the columns are the fallback.
       const own = packsOf.get(m.id) ?? [];
-      const list = own.length ? own : [{ id: 0, brand: m.brand, packUnit: m.packUnit, perBox: m.perBox }];
+      const list = own.length ? own : [{ id: 0, brand: m.brand, packUnit: m.packUnit, perBox: m.perBox, reserve: m.reserve }];
       const brands = [...new Set(list.map((p) => p.brand).filter((b): b is string => !!b))];
       const tags = sortTags(m.tags);
       return [
@@ -42,7 +42,7 @@ export async function listMedications(): Promise<MedicationRecord[]> {
           packUnit: list[0].packUnit,
           perBox: list[0].perBox,
           packs: list,
-          reserve: m.reserve,
+          reserve: list.reduce((n, p) => n + p.reserve, 0),
           tags,
           supplies: [],
           counts: [],
@@ -73,6 +73,7 @@ export async function listMedications(): Promise<MedicationRecord[]> {
       slotsDone: c.slotsDone as CountRecord["slotsDone"],
       quantity: c.quantity,
       recordedAt: c.createdAt.getTime(),
+      packId: c.packId,
     });
   }
   for (const r of regimens) {

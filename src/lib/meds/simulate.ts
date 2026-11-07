@@ -6,6 +6,10 @@
  *
  * Quantities are 0.5-pill granular. Internally everything is counted in half pills
  * (integers), so sums never drift the way repeated float subtraction would.
+ *
+ * A medication can come in several packs (manufacturers). Each keeps its own balance: a supply
+ * goes to its pack, a count can be of one pack, and doses are taken from the packs in order
+ * (the default first, the next once it is empty). Without `packs` it is all one balance.
  */
 
 import { fromDayNum, toDayNum, type ISODate } from "./dates";
@@ -28,6 +32,8 @@ export interface SupplyInput {
   quantity: number;
   /** When it was entered; only compared with a count on the same day. */
   recordedAt?: number;
+  /** The pack it came in (one of `SimulateOptions.packs`); none / unknown = the first. */
+  packId?: number | null;
 }
 
 /**
@@ -40,6 +46,8 @@ export interface CountInput {
   slotsDone: 0 | 1 | 2 | 3;
   quantity: number;
   recordedAt?: number;
+  /** Counts this pack only (the others keep theirs); none = all packs together. */
+  packId?: number | null;
 }
 
 export interface RegimenInput extends Dose {
@@ -85,14 +93,23 @@ export interface DaySnapshot {
   slots: [SlotOutcome, SlotOutcome, SlotOutcome];
   taken: number;
   endOfDayBalance: number;
+  /** Each pack's balance (in `Simulation.packs` order), when there are several. */
+  byPack?: PackBalances;
+}
+
+export interface PackBalances {
+  /** At `startBalance`. */
+  start: number[];
+  /** Right after each slot, like `SlotOutcome.after`. */
+  after: [number[], number[], number[]];
 }
 
 export interface DayCount {
   /** How many of the day's slots were behind the count (0 = before the morning dose). */
   slotsDone: 0 | 1 | 2 | 3;
-  /** What the records gave at that moment, replaced by the count. */
+  /** What the records gave at that moment (all packs), replaced by the count. */
   before: number;
-  /** The counted pills. */
+  /** The pills there were after the count (all packs; a count of one pack keeps the others'). */
   quantity: number;
   /** Same-day supplies entered after the count, added on top of it. */
   late: number;
@@ -121,6 +138,8 @@ export type Outcome =
   | { kind: "capped"; balance: number; until: ISODate };
 
 export interface Simulation {
+  /** The pack ids balanced separately (`SimulateOptions.packs`); [] when not given. */
+  packs: readonly number[];
   days: DaySnapshot[];
   /** The latest supply / regimen date (null when there are no records). */
   lastRecordDate: ISODate | null;
@@ -136,8 +155,14 @@ export interface SimulateOptions {
   maxYears?: number;
   /** Hospital stays: every dose on these days is skipped. */
   pauses?: readonly DateRange[];
-  /** Stock counts (at most one per day; a later one in the list wins). */
+  /** Stock counts (at most one per day and pack; a later one in the list wins). */
   counts?: readonly CountInput[];
+  /**
+   * The medication's pack ids, in the order their pills are taken (the default first). Each
+   * keeps its own balance; supplies and counts name theirs. Pass them whenever a count or
+   * supply may name a pack.
+   */
+  packs?: readonly number[];
 }
 
 const toHalves = (n: number) => Math.round(n * 2);
@@ -148,28 +173,92 @@ interface HalfRegimen {
   doses: [number, number, number];
 }
 
+interface HalfCount {
+  at: number;
+  halves: number;
+  recordedAt: number | undefined;
+  /** The pack's index, or null for all packs. */
+  pack: number | null;
+  /** Same-day supplies entered after it, per pack. */
+  late: number[];
+}
+
+const sum = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0);
+
+/** Takes `n` from the balances in order (the first pack first); returns what was taken. */
+function takeInOrder(bal: number[], n: number): number {
+  let left = n;
+  for (let i = 0; i < bal.length && left > 0; i++) {
+    const t = Math.min(bal[i], left);
+    bal[i] -= t;
+    left -= t;
+  }
+  return n - left;
+}
+
+/**
+ * Sets the packs' total to `total`, as a count of all packs together says: extra pills go to the
+ * first pack, missing ones come off in the order pills are taken (the first pack first).
+ */
+export function settleTotal(amounts: readonly number[], total: number): number[] {
+  const out = amounts.map(toHalves);
+  settleHalves(out, toHalves(total));
+  return out.map(fromHalves);
+}
+
+function settleHalves(bal: number[], total: number) {
+  if (bal.length === 0) return;
+  const diff = total - sum(bal);
+  if (diff >= 0) bal[0] += diff;
+  else takeInOrder(bal, -diff);
+}
+
 export function simulate(
   supplies: readonly SupplyInput[],
   regimens: readonly RegimenInput[],
   options: SimulateOptions = {},
 ): Simulation {
   const counts = options.counts ?? [];
+  const packs = options.packs ?? [];
   if (supplies.length === 0 && regimens.length === 0 && counts.length === 0) {
-    return { days: [], lastRecordDate: null, outcome: { kind: "empty" } };
+    return { packs, days: [], lastRecordDate: null, outcome: { kind: "empty" } };
   }
+  const width = Math.max(1, packs.length);
+  const tracked = packs.length > 1;
+  const packIndex = (id: number | null | undefined) => {
+    const i = id == null ? -1 : packs.indexOf(id);
+    return i < 0 ? 0 : i;
+  };
+  const zeros = () => new Array<number>(width).fill(0);
 
-  const countOn = new Map<number, { at: number; halves: number; recordedAt: number | undefined }>();
-  for (const c of counts) countOn.set(toDayNum(c.date), { at: c.slotsDone, halves: toHalves(c.quantity), recordedAt: c.recordedAt });
+  // One count per day and pack (or all packs); applied by slot, then in the order entered.
+  const byKey = new Map<string, HalfCount & { day: number }>();
+  for (const c of counts) {
+    const day = toDayNum(c.date);
+    const pack = c.packId == null || !tracked ? null : packIndex(c.packId);
+    byKey.set(`${day}|${pack}`, { day, at: c.slotsDone, halves: toHalves(c.quantity), recordedAt: c.recordedAt, pack, late: zeros() });
+  }
+  const countsOn = new Map<number, HalfCount[]>();
+  for (const c of byKey.values()) countsOn.set(c.day, [...(countsOn.get(c.day) ?? []), c]);
+  for (const list of countsOn.values()) list.sort((a, b) => a.at - b.at || (a.recordedAt ?? 0) - (b.recordedAt ?? 0));
 
-  // Supplies count from the start of their day, unless entered after that day's count.
-  const suppliedOn = new Map<number, number>();
-  const lateOn = new Map<number, number>();
+  // Supplies count from the start of their day, unless entered after a count of that day that
+  // covers their pack: then they come on top of the latest such count.
+  const suppliedOn = new Map<number, number[]>();
   for (const s of supplies) {
     const day = toDayNum(s.date);
-    const c = countOn.get(day);
-    const late = c !== undefined && c.recordedAt !== undefined && s.recordedAt !== undefined && s.recordedAt > c.recordedAt;
-    const into = late ? lateOn : suppliedOn;
-    into.set(day, (into.get(day) ?? 0) + toHalves(s.quantity));
+    const pack = packIndex(s.packId);
+    const halves = toHalves(s.quantity);
+    const after = (countsOn.get(day) ?? [])
+      .filter((c) => (c.pack === null || c.pack === pack) && c.recordedAt !== undefined && s.recordedAt !== undefined && s.recordedAt > c.recordedAt)
+      .reduce<HalfCount | null>((a, c) => (!a || c.recordedAt! > a.recordedAt! ? c : a), null);
+    if (after) {
+      after.late[pack] += halves;
+    } else {
+      const list = suppliedOn.get(day) ?? zeros();
+      list[pack] += halves;
+      suppliedOn.set(day, list);
+    }
   }
 
   // One regimen per day; if the caller passes duplicates the later one wins.
@@ -180,7 +269,7 @@ export function simulate(
   }
   const timeline = [...regimenOn.values()].sort((a, b) => a.day - b.day);
 
-  const recordDays = [...suppliedOn.keys(), ...lateOn.keys(), ...countOn.keys(), ...regimenOn.keys()];
+  const recordDays = [...suppliedOn.keys(), ...countsOn.keys(), ...regimenOn.keys()];
   const start = Math.min(...recordDays);
   const lastRecord = Math.max(...recordDays);
   const horizon = Math.max(
@@ -192,7 +281,7 @@ export function simulate(
   const pauses = (options.pauses ?? []).map((p) => [toDayNum(p.start), toDayNum(p.end)] as const);
 
   const days: DaySnapshot[] = [];
-  let balance = 0;
+  const bal = zeros();
   let regimenIdx = -1;
   let lastFull: FullDose | null = null;
   let lastPartial: PartialDose | null = null;
@@ -202,25 +291,37 @@ export function simulate(
     const date = fromDayNum(day);
 
     // Step A: today's supply is available before the morning dose.
-    const early = suppliedOn.get(day) ?? 0;
-    const late = lateOn.get(day) ?? 0;
-    balance += early;
+    const early = suppliedOn.get(day);
+    if (early) for (let i = 0; i < width; i++) bal[i] += early[i];
+    let suppliedToday = early ? sum(early) : 0;
 
     // A count replaces the balance once `at` slots are behind; later supplies come on top.
-    const counted = countOn.get(day);
-    let count: DayCount | null = null;
-    const applyCount = (slotsDone: number) => {
-      if (!counted || counted.at !== slotsDone) return;
-      count = {
-        slotsDone: slotsDone as DayCount["slotsDone"],
-        before: fromHalves(balance),
-        quantity: fromHalves(counted.halves),
-        late: fromHalves(late),
-      };
-      balance = counted.halves + late;
+    const dayCounts = countsOn.get(day);
+    let count: { slotsDone: number; before: number; after: number; late: number } | null = null;
+    const applyCounts = (slotsDone: number) => {
+      if (!dayCounts) return;
+      for (const c of dayCounts) {
+        if (c.at !== slotsDone) continue;
+        const before = sum(bal);
+        if (c.pack === null) settleHalves(bal, c.halves);
+        else bal[c.pack] = c.halves;
+        const late = sum(c.late);
+        for (let i = 0; i < width; i++) bal[i] += c.late[i];
+        suppliedToday += late;
+        // Several counts in a day read as one: from the first one's before to the last one's after.
+        count = { slotsDone, before: count?.before ?? before, after: sum(bal), late: (count?.late ?? 0) + late };
+      }
     };
-    applyCount(0);
-    const startBalance = balance;
+    const dayCount = (): DayCount | null =>
+      count && {
+        slotsDone: count.slotsDone as DayCount["slotsDone"],
+        before: fromHalves(count.before),
+        quantity: fromHalves(count.after - count.late),
+        late: fromHalves(count.late),
+      };
+    applyCounts(0);
+    const startBalance = sum(bal);
+    const byPack: PackBalances | undefined = tracked ? { start: bal.map(fromHalves), after: [[], [], []] } : undefined;
 
     // Step B: latest regimen with effectiveFrom <= today.
     while (regimenIdx + 1 < timeline.length && timeline[regimenIdx + 1].day <= day) regimenIdx++;
@@ -238,16 +339,15 @@ export function simulate(
       if (dose <= 0) {
         // Nothing scheduled: skip the slot.
         status = "none";
-      } else if (balance >= dose) {
-        taken = dose;
-        balance -= dose;
-        lastFull = { date, slot, remainingAfter: fromHalves(balance) };
+      } else if (sum(bal) >= dose) {
+        // The first pack first, then the next.
+        taken = takeInOrder(bal, dose);
+        lastFull = { date, slot, remainingAfter: fromHalves(sum(bal)) };
         lastPartial = null;
         status = "full";
-      } else if (balance > 0) {
+      } else if (sum(bal) > 0) {
         // Not enough for a whole dose: take what is left, stock hits exactly 0.
-        taken = balance;
-        balance = 0;
+        taken = takeInOrder(bal, dose);
         lastPartial = { date, slot, partialRemaining: fromHalves(taken), required: fromHalves(dose) };
         status = "partial";
       } else {
@@ -255,16 +355,17 @@ export function simulate(
         status = "missed";
       }
       takenToday += taken;
-      applyCount(i + 1);
-      slots.push({ slot, required: status === "none" ? 0 : fromHalves(dose), taken: fromHalves(taken), after: fromHalves(balance), status });
+      applyCounts(i + 1);
+      if (byPack) byPack.after[i] = bal.map(fromHalves);
+      slots.push({ slot, required: status === "none" ? 0 : fromHalves(dose), taken: fromHalves(taken), after: fromHalves(sum(bal)), status });
     }
 
     // Step D: daily snapshot.
     days.push({
       date,
       day,
-      supplied: fromHalves(early + late),
-      count,
+      supplied: fromHalves(suppliedToday),
+      count: dayCount(),
       startBalance: fromHalves(startBalance),
       regimen: regimen
         ? { morning: fromHalves(regimen.doses[0]), noon: fromHalves(regimen.doses[1]), evening: fromHalves(regimen.doses[2]) }
@@ -273,11 +374,13 @@ export function simulate(
       paused,
       slots: slots as DaySnapshot["slots"],
       taken: fromHalves(takenToday),
-      endOfDayBalance: fromHalves(balance),
+      endOfDayBalance: fromHalves(sum(bal)),
+      ...(byPack ? { byPack } : {}),
     });
 
     // Termination: only once every record (and today) is behind us.
     if (day >= horizon) {
+      const balance = sum(bal);
       const daily = regimen ? regimen.doses[0] + regimen.doses[1] + regimen.doses[2] : 0;
       if (daily === 0) {
         outcome = regimen
@@ -296,7 +399,7 @@ export function simulate(
     }
   }
 
-  return { days, lastRecordDate: fromDayNum(lastRecord), outcome };
+  return { packs, days, lastRecordDate: fromDayNum(lastRecord), outcome };
 }
 
 /* ------------------------------------------------------------------------------------------
@@ -329,6 +432,23 @@ export function balanceAt(sim: Simulation, m: Moment): number {
   if (day > last.day) return last.endOfDayBalance;
   const snap = sim.days[day - first.day];
   return m.slotsDone === 0 ? snap.startBalance : snap.slots[m.slotsDone - 1].after;
+}
+
+/**
+ * Each pack's balance at moment `m`, in `sim.packs` order ([] when the simulation was not given
+ * packs; one pack's is the whole balance).
+ */
+export function packBalancesAt(sim: Simulation, m: Moment): number[] {
+  if (sim.packs.length <= 1) return sim.packs.map(() => balanceAt(sim, m));
+  if (sim.days.length === 0) return sim.packs.map(() => 0);
+  const day = toDayNum(m.date);
+  const first = sim.days[0];
+  if (day < first.day) return sim.packs.map(() => 0);
+  const last = sim.days[sim.days.length - 1];
+  if (day > last.day) return last.byPack?.after[2] ?? sim.packs.map(() => 0);
+  const snap = sim.days[day - first.day];
+  if (!snap.byPack) return sim.packs.map(() => 0);
+  return m.slotsDone === 0 ? snap.byPack.start : snap.byPack.after[m.slotsDone - 1];
 }
 
 export function regimenAt<T extends RegimenInput>(regimens: readonly T[], date: ISODate): T | null {
@@ -439,7 +559,7 @@ export function supplyToLast(
   regimens: readonly RegimenInput[],
   supply: { date: ISODate; recordedAt?: number },
   until: ISODate,
-  options: Pick<SimulateOptions, "pauses" | "counts"> = {},
+  options: Pick<SimulateOptions, "pauses" | "counts" | "packs"> = {},
 ): number | null {
   const from = toDayNum(supply.date);
   const last = toDayNum(until);

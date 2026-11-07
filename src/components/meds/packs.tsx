@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { addPack, deletePack, setDefaultPack, updatePack } from "@/app/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { fmtQty } from "@/lib/meds/format";
+import { fmtPacks, fmtQty, packShares, type MedicationStatus, type PackShare } from "@/lib/meds/format";
 import type { ActionResult, MedicationRecord, PackRecord, PackUnit } from "@/lib/meds/types";
 import { packSchema } from "@/lib/meds/validation";
 import { FormError, SubmitButton, useActionForm } from "./forms";
@@ -14,6 +14,23 @@ import { ConfirmDelete } from "./history";
 import { PackInputs } from "./medication-dialogs";
 
 type Values = { brand: string; packUnit: PackUnit; perBox: string };
+
+/** "28 颗（2 盒）" */
+export const pillsAndPacks = (pills: number, p: Pick<PackRecord, "perBox" | "packUnit">) =>
+  p.perBox && pills >= p.perBox ? `${fmtQty(pills)} 颗（${fmtPacks(pills, p.perBox, p.packUnit)}）` : `${fmtQty(pills)} 颗`;
+
+/** One line per manufacturer: "湖南洞庭 28 颗（2 盒）". */
+export function PackAmounts({ shares, of, className }: { shares: readonly PackShare[]; of: "stock" | "reserve"; className?: string }) {
+  return (
+    <span className={className ?? "grid justify-items-end text-xs text-muted-foreground tabular-nums"}>
+      {shares.map(({ pack, ...amounts }) => (
+        <span key={pack.id}>
+          {pack.brand ?? "未写厂家"} {pillsAndPacks(amounts[of], pack)}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 function PackForm({
   initial,
@@ -56,20 +73,20 @@ function PackForm({
 const valuesOf = (p?: PackRecord): Values => ({ brand: p?.brand ?? "", packUnit: p?.packUnit ?? "盒", perBox: p?.perBox ? String(p.perBox) : "" });
 
 /**
- * The manufacturers / brands this pill comes from. They share one stock; the default one's pack
- * size counts the boxes to get at a visit.
+ * The manufacturers / brands this pill comes from, each with its own stock and reserve. The
+ * default one's pills are taken first and its pack size counts the boxes to get at a visit.
  */
-export function PacksPanel({ medication }: { medication: MedicationRecord }) {
+export function PacksPanel({ medication, status }: { medication: MedicationRecord; status: Pick<MedicationStatus, "byPack" | "balanceNow"> }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
   const [pending, startTransition] = useTransition();
   const packs = medication.packs;
-  const bought = (id: number) => medication.supplies.filter((s) => s.packId === id).reduce((n, s) => n + s.quantity, 0);
+  const shares = packShares(medication, status);
   return (
     <section className="grid content-start gap-2 rounded-lg border p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">
-          厂家 / 包装（同名同规格，共用一份余量；就诊按“默认”的每{medication.packUnit}颗数算{medication.packUnit}数）
+          厂家 / 包装（同名同规格，每个厂家的余量和储备分开记；先吃“默认”的，就诊按它的每{medication.packUnit}颗数算{medication.packUnit}数）
         </span>
         <Button
           size="xs"
@@ -104,7 +121,11 @@ export function PacksPanel({ medication }: { medication: MedicationRecord }) {
               <span className="font-medium">{p.brand ?? "未写厂家"}</span>
               <span className="text-muted-foreground tabular-nums">{p.perBox ? `${fmtQty(p.perBox)} 颗/${p.packUnit}` : `${p.packUnit}装，未写每${p.packUnit}颗数`}</span>
               {i === 0 && packs.length > 1 && <Badge variant="secondary">默认</Badge>}
-              {packs.length > 1 && bought(p.id) > 0 && <span className="text-xs text-muted-foreground tabular-nums">补过 {fmtQty(bought(p.id))} 颗</span>}
+              {packs.length > 1 && (
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  余 {pillsAndPacks(shares[i].stock, p)} · 储备 {pillsAndPacks(shares[i].reserve, p)}
+                </span>
+              )}
               <div className="ml-auto flex items-center">
                 {i > 0 && p.id > 0 && (
                   <Button
@@ -140,7 +161,7 @@ export function PacksPanel({ medication }: { medication: MedicationRecord }) {
                 {packs.length > 1 && (
                   <ConfirmDelete
                     title={`删除厂家「${p.brand ?? "未写厂家"}」？`}
-                    description="只删掉这个厂家 / 包装；用它补过的药照样计入余量，只是不再标明厂家。"
+                    description={`它的余量和储备并入${i === 0 ? "下一个" : "默认"}厂家（用它补过的药不再标明厂家），只对它做的盘点会删掉。`}
                     onConfirm={() => deletePack(p.id)}
                   />
                 )}

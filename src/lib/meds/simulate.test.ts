@@ -19,7 +19,9 @@ import {
   momentAt,
   fullDays,
   nextShortfall,
+  packBalancesAt,
   regimenAt,
+  settleTotal,
   simulate,
   supplyToLast,
   type RegimenInput,
@@ -407,6 +409,107 @@ describe("stock counts", () => {
     expect(balanceAt(sim, momentAt("2026-11-06", 20 * 60))).toBe(10);
     // 10 pills at 2 a day: 11-07..11-11.
     expect(sim.outcome).toMatchObject({ kind: "depleted", lastFull: { date: "2026-11-11", slot: "evening" } });
+  });
+});
+
+describe("packs (manufacturers)", () => {
+  const A = 11; // the default pack
+  const B = 12;
+  const regimens = [reg("2026-11-01", 1, 0, 1)];
+  const at = (date: string, minutes: number) => momentAt(date, minutes);
+
+  it("keeps each pack's pills and takes doses from the default pack first", () => {
+    const supplies: SupplyInput[] = [
+      { date: "2026-11-01", quantity: 4, packId: A },
+      { date: "2026-11-01", quantity: 20, packId: B },
+    ];
+    const sim = simulate(supplies, regimens, { packs: [A, B], today: "2026-11-05" });
+    // 11-01, 11-02 eat A's 4; from 11-03 the doses come out of B.
+    expect(packBalancesAt(sim, at("2026-11-01", 0))).toEqual([4, 20]);
+    expect(packBalancesAt(sim, at("2026-11-02", 23 * 60))).toEqual([0, 20]);
+    expect(packBalancesAt(sim, at("2026-11-03", 9 * 60))).toEqual([0, 19]);
+    // The total is what one balance would give.
+    const one = simulate(supplies.map(({ date, quantity }) => ({ date, quantity })), regimens, { today: "2026-11-05" });
+    expect(sim.days.map((d) => d.endOfDayBalance)).toEqual(one.days.map((d) => d.endOfDayBalance));
+    expect(sim.outcome).toEqual(one.outcome);
+  });
+
+  it("splits a dose across packs when the first runs out mid-dose", () => {
+    const sim = simulate(
+      [
+        { date: "2026-11-01", quantity: 1, packId: A },
+        { date: "2026-11-01", quantity: 5, packId: B },
+      ],
+      [reg("2026-11-01", 2, 0, 0)],
+      { packs: [A, B] },
+    );
+    expect(day(sim, "2026-11-01").slots[0]).toMatchObject({ status: "full", taken: 2, after: 4 });
+    expect(day(sim, "2026-11-01").byPack?.after[0]).toEqual([0, 4]);
+  });
+
+  it("puts supplies without a pack (or of an unknown one) into the default pack", () => {
+    const sim = simulate(
+      [
+        { date: "2026-11-01", quantity: 10 },
+        { date: "2026-11-01", quantity: 6, packId: 99 },
+        { date: "2026-11-01", quantity: 3, packId: B },
+      ],
+      [],
+      { packs: [A, B] },
+    );
+    expect(packBalancesAt(sim, at("2026-11-01", 0))).toEqual([16, 3]);
+  });
+
+  it("counts one pack without touching the other", () => {
+    const supplies: SupplyInput[] = [
+      { date: "2026-11-01", quantity: 10, packId: A },
+      { date: "2026-11-01", quantity: 20, packId: B },
+    ];
+    // 11-01..11-02 eat 4 of A → A 6; 11-03 before 早 B is counted at 15.
+    const sim = simulate(supplies, regimens, {
+      packs: [A, B],
+      counts: [{ date: "2026-11-03", slotsDone: 0, quantity: 15, packId: B }],
+    });
+    expect(day(sim, "2026-11-03").count).toEqual({ slotsDone: 0, before: 26, quantity: 21, late: 0 });
+    expect(packBalancesAt(sim, at("2026-11-03", 0))).toEqual([6, 15]);
+    expect(packBalancesAt(sim, at("2026-11-03", 23 * 60))).toEqual([4, 15]);
+  });
+
+  it("settles a count of all packs: extra pills go to the default, missing ones come off in the order taken", () => {
+    expect(settleTotal([4, 20], 30)).toEqual([10, 20]);
+    expect(settleTotal([4, 20], 10)).toEqual([0, 10]);
+    expect(settleTotal([4, 20], 0)).toEqual([0, 0]);
+    expect(settleTotal([], 5)).toEqual([]);
+    const sim = simulate(
+      [
+        { date: "2026-11-01", quantity: 4, packId: A },
+        { date: "2026-11-01", quantity: 20, packId: B },
+      ],
+      [],
+      { packs: [A, B], counts: [{ date: "2026-11-02", slotsDone: 0, quantity: 18 }] },
+    );
+    expect(packBalancesAt(sim, at("2026-11-02", 0))).toEqual([0, 18]);
+  });
+
+  it("adds a same-day supply entered after a pack's count on top of it, but not one of another pack", () => {
+    const sim = simulate(
+      [
+        { date: "2026-11-01", quantity: 10, packId: A, recordedAt: 1 },
+        { date: "2026-11-02", quantity: 7, packId: B, recordedAt: 30 },
+        { date: "2026-11-02", quantity: 5, packId: A, recordedAt: 40 },
+      ],
+      [],
+      { packs: [A, B], counts: [{ date: "2026-11-02", slotsDone: 0, quantity: 3, packId: B, recordedAt: 20 }] },
+    );
+    // B: counted 3, +7 after; A: 10 + 5 (no count of A that day).
+    expect(packBalancesAt(sim, at("2026-11-02", 0))).toEqual([15, 10]);
+    expect(day(sim, "2026-11-02").count).toEqual({ slotsDone: 0, before: 15, quantity: 18, late: 7 });
+  });
+
+  it("gives the whole balance for one pack and nothing without packs", () => {
+    const sim = simulate([sup("2026-11-01", 8)], regimens, { packs: [A] });
+    expect(packBalancesAt(sim, at("2026-11-01", 0))).toEqual([8]);
+    expect(packBalancesAt(simulate([sup("2026-11-01", 8)], regimens), at("2026-11-01", 0))).toEqual([]);
   });
 });
 

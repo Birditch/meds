@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useClock, type Clock } from "@/hooks/use-clock";
-import { intakeAt, isTaking, medicationStatus } from "@/lib/meds/format";
+import { intakeAt, isTaking, statusOf } from "@/lib/meds/format";
 import type { MedicationRecord, StayRecord, VisitRecord } from "@/lib/meds/types";
 import { scheduleVisits } from "@/lib/meds/visits";
 
@@ -24,7 +24,7 @@ export function useMeds({ medications, visits, stays, serverClock }: MedsData) {
   const statuses = useMemo(
     () =>
       new Map(
-        medications.map((m) => [m.id, medicationStatus(m.supplies, m.regimens, now, schedule, { pauses, perBox: m.perBox, counts: m.counts })]),
+        medications.map((m) => [m.id, statusOf(m, now, schedule, pauses)]),
       ),
     [medications, now, schedule, pauses],
   );

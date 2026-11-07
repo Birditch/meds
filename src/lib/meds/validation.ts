@@ -101,7 +101,8 @@ const countedSchema = reserveSchema.nullable();
 
 /**
  * One-click import. `stock` / `reserve` null = leave unchanged; `regimen` null = keep the
- * current one. Stock is counted at `at`: after `slotsDone` of that day's doses.
+ * current one. Stock is counted at `at`: after `slotsDone` of that day's doses. An existing
+ * medication's row is about one of its packs (manufacturers): stock and reserve are that pack's.
  */
 export const importSchema = z
   .object({
@@ -132,9 +133,11 @@ export const importSchema = z
       .max(300, "一次最多录入 300 种药"),
   })
   .refine((v) => {
-    const ids = v.rows.flatMap((r) => (r.kind === "existing" ? [r.id] : []));
-    return new Set(ids).size === ids.length;
-  }, "同一种药出现了两次");
+    const keys = v.rows.flatMap((r) =>
+      r.kind === "existing" ? [`${r.id}|${!r.pack ? "" : "id" in r.pack ? r.pack.id : r.pack.brand.replace(/\s+/g, "").toLowerCase()}`] : [],
+    );
+    return new Set(keys).size === keys.length;
+  }, "同一种药的同一个厂家出现了两次");
 
 export type MedicationFields = z.input<typeof medicationSchema>;
 export type MedicationInfoFields = z.input<typeof medicationInfoSchema>;

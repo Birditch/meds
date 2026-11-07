@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { isValidISODate, wallClock } from "@/lib/meds/dates";
 import { finalDose, momentAt } from "@/lib/meds/simulate";
-import { medicationStatus, reserveEstimate } from "@/lib/meds/format";
+import { reserveEstimate, statusOf } from "@/lib/meds/format";
 import { listMedications, listStays, listVisits } from "@/lib/meds/repo";
 import { scheduleVisits } from "@/lib/meds/visits";
 
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   const pauses = stays.map((s) => ({ start: s.startDate, end: s.endDate }));
   const medications = records.map(({ searchKeys, ...m }) => {
     void searchKeys; // a client-side search aid, not data
-    const s = medicationStatus(m.supplies, m.regimens, now, schedule, { pauses, perBox: m.perBox, counts: m.counts });
+    const s = statusOf(m, now, schedule, pauses);
     return {
       ...m,
       projection: {

@@ -8,11 +8,13 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
 - **Three pages** in the top navigation: **药品** (`/`, the medication cards and everything
   recorded on them), **就诊 · 住院** (`/visits`, the visit plan and the hospital stays) and
   **导出清单** (`/reports`, the PDF lists).
-- **Per medication**: one pill = a name and a strength (e.g. `氯硝西泮片 2mg`), with one stock,
-  regimen and reserve. It can come from **several manufacturers / brands (厂家 / 包装)**, each with
-  its own unit (盒 / 瓶) and pills per pack; they share the stock, every supply can record which one
-  was bought, and the default one (first) counts the boxes for a visit (the others' box counts are
-  shown next to it). Another strength (帕利哌酮缓释片 3mg / 6mg) is another medication; strengths of
+- **Per medication**: one pill = a name and a strength (e.g. `氯硝西泮片 2mg`), with one card and
+  one regimen. It can come from **several manufacturers / brands (厂家 / 包装)**, each with its own
+  unit (盒 / 瓶), pills per pack, **stock and reserve, counted separately**: a supply goes to the
+  manufacturer bought, a count can be of one manufacturer, and the doses are taken from the
+  default one (first) until it is empty, then from the next (设为默认 changes which). The card,
+  the detail view and the PDFs show the total with each manufacturer's share under it. The
+  default one also counts the boxes for a visit (the others' box counts are shown next to it). Another strength (帕利哌酮缓释片 3mg / 6mg) is another medication; strengths of
   the same drug sit next to each other on the board. Every remaining amount is also shown in packs,
   e.g. `合 6 瓶 14 颗`.
 - **Duplicate check when adding**: typing a name looks up existing medications (name, brand,
@@ -33,7 +35,9 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
 - **Stock counts (盘点)**: the pills actually at home at one moment (before 早, or after 早 /
   中 / 晚 of a day). From then on the stock is exactly the counted number, whatever the earlier
   records say; a same-day supply entered after the count is added on top of it, one entered
-  before it is already in it. One count per medication per day (counting again replaces it).
+  before it is already in it. One count per medication (or manufacturer) per day (counting again
+  replaces it); a count of one manufacturer leaves the others' stock as it was, a count of all of
+  them puts extra pills in the default one and takes missing ones off in the order they are taken.
 - **One-click import (一键录入)**: paste a list, one medication per line, or fill the table, and
   record the stock of every medication at once (as counts), plus reserves, pills per pack,
   regimen changes and new medications, in one transaction. Lines are free text, e.g.
@@ -41,8 +45,9 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   `阿托伐他汀钙片（立普妥） 20mg 7片×2板 剩 20 片`; amounts are stock unless a reserve word
   (储备 / 备用) comes first, and a bare number is read only right after 余 / 剩 / 储备. Lines
   match existing medications by name, any of their brands or pinyin (narrowed by dosage; another
-  dosage is a new medication); a known medication from a manufacturer not on file gets it as a new
-  manufacturer. "填入当前清单" writes the current list in that format to edit and paste back.
+  dosage is a new medication). The table has a row per manufacturer: a line naming one fills its
+  row (its stock and reserve), a line naming none fills the default one, and a known medication
+  from a manufacturer not on file gets it as a new manufacturer. "填入当前清单" writes the current list in that format to edit and paste back.
   A stock equal to the projection records nothing; a new medication's stock becomes a supply that
   day (plus the doses already taken by then). Medications without pills per pack are tagged
   **未写明每盒颗数** on the board, filterable, and in the import table. The form is saved as a
@@ -54,9 +59,10 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   the PDF lists leave the medications not being taken out of what to get.
 - **Regimen timeline**: morning / noon / evening doses, each with an `effectiveFrom` date.
   A regimen never applies before its date; setting one again for the same date overwrites it.
-- **Reserve (药物储备)** (管理储备 on each card): extra pills kept at home, outside the stock and the projection. The app
-  only says how many whole days they would last on today's regimen. "从储备取用" moves pills from
-  the reserve into the stock as one supply log.
+- **Reserve (药物储备)** (管理储备 on each card): extra pills kept at home, outside the stock and the projection, per
+  manufacturer. The app only says how many whole days they would last on today's regimen.
+  "加入储备" adds pills on top of what is there, "从储备取用" moves pills from the reserve into the
+  stock as one supply log of that manufacturer, "盘点储备" replaces the number with a count.
 - **Visit plan (就诊计划)**: enter the next visits (下次, 下下次, …). For each one and each
   medication it works out how many pills — and how many whole boxes / bottles — to get so the
   stock lasts to the following visit without touching the reserve. Extra pills from rounding up
@@ -73,7 +79,8 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   **复诊开药清单** (per visit: any upcoming one on 导出清单, or from its row in the visit plan): the stock left after the Wednesday
   evening before the visit, what the period to the following visit (usually 4 weeks) takes, and
   what is short as `N 盒（M 颗）`, with each medication's reason, the whole packs to get, every
-  purchase (each supply log counts as one) and stock count. **药品现有清单**: current stock,
+  purchase (each supply log counts as one) and stock count; medications not being taken are left
+  out of it. **药品现有清单**: current stock,
   regimen, run-out day, purchases and counts. **药品储备清单**: the reserve and how long it
   lasts. The visit and stock lists never include the reserve.
 - **Hospital stays (住院)**: no medication is taken from home stock on those days (start and end

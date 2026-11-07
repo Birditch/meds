@@ -16,7 +16,7 @@ export const medications = pgTable(
     packUnit: text({ enum: ["盒", "瓶"] }).notNull().default("盒"),
     /** Pills per box / bottle, to turn a prescription into whole packs. Unknown when null. */
     perBox: numeric({ precision: 7, scale: 1, mode: "number" }),
-    /** Extra pills kept at home for emergencies; not part of the stock simulation. */
+    /** The packs' reserves added up (medication_packs.reserve), kept for older code and rollbacks. */
     reserve: numeric({ precision: 10, scale: 1, mode: "number" }).notNull().default(0),
     /** Tags: codes from src/lib/meds/tags.ts (精二, 处方药, 医保乙类…) or the user's own words. */
     tags: text().array().notNull().default(sql`'{}'::text[]`),
@@ -32,8 +32,9 @@ export const medications = pgTable(
 
 /**
  * The ways one medication (one pill: name + strength) comes: each manufacturer's or brand's
- * pack, with its own unit and pills per pack. They share the medication's stock. The first
- * (lowest position) is the default, used to count whole packs for a visit.
+ * pack, with its own unit and pills per pack, its own stock (from its supplies and counts) and
+ * its own reserve. The first (lowest position) is the default: its pills are taken first and it
+ * counts the whole packs to get at a visit.
  */
 export const medicationPacks = pgTable(
   "medication_packs",
@@ -47,6 +48,8 @@ export const medicationPacks = pgTable(
     packUnit: text({ enum: ["盒", "瓶"] }).notNull().default("盒"),
     perBox: numeric({ precision: 7, scale: 1, mode: "number" }),
     position: smallint().notNull().default(0),
+    /** Extra pills of this pack kept at home for emergencies; not part of the stock simulation. */
+    reserve: numeric({ precision: 10, scale: 1, mode: "number" }).notNull().default(0),
     createdAt: timestamp({ withTimezone: true, mode: "date" }).notNull().defaultNow(),
   },
   (t) => [
@@ -54,6 +57,8 @@ export const medicationPacks = pgTable(
     check("medication_packs_pack_unit", sql`${t.packUnit} in ('盒', '瓶')`),
     check("medication_packs_per_box_positive", sql`${t.perBox} > 0`),
     check("medication_packs_per_box_half_step", halfStep("per_box")),
+    check("medication_packs_reserve_non_negative", sql`${t.reserve} >= 0`),
+    check("medication_packs_reserve_half_step", halfStep("reserve")),
   ],
 );
 
@@ -81,7 +86,8 @@ export const supplyLogs = pgTable(
 /**
  * A stock count: the pills actually at home at one moment of a day, after `slotsDone` (0–3)
  * of that day's doses. From then on the stock is that number, whatever the records before it
- * say. Supplies of the same day entered after the count come on top of it.
+ * say. Supplies of the same day entered after the count come on top of it. With `packId` it
+ * counts that pack's pills only; without, the medication's (all its packs together).
  */
 export const stockCounts = pgTable(
   "stock_counts",
@@ -93,11 +99,13 @@ export const stockCounts = pgTable(
     date: date({ mode: "string" }).notNull(),
     slotsDone: smallint().notNull(),
     quantity: numeric({ precision: 10, scale: 1, mode: "number" }).notNull(),
+    /** The pack counted; null = the whole medication. */
+    packId: integer().references(() => medicationPacks.id, { onDelete: "cascade" }),
     createdAt: timestamp({ withTimezone: true, mode: "date" }).notNull().defaultNow(),
   },
   (t) => [
-    // One count per medication per day: counting again that day replaces it.
-    unique("stock_counts_medication_date_key").on(t.medicationId, t.date),
+    // One count per medication (or pack) per day: counting again that day replaces it.
+    unique("stock_counts_medication_date_pack_key").on(t.medicationId, t.date, t.packId).nullsNotDistinct(),
     check("stock_counts_slots_done", sql`${t.slotsDone} between 0 and 3`),
     check("stock_counts_quantity_non_negative", sql`${t.quantity} >= 0`),
     check("stock_counts_quantity_half_step", halfStep("quantity")),

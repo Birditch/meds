@@ -36,6 +36,13 @@
       "when": 1793989110637,
       "tag": "0004_medication_packs_tags",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794021529258,
+      "tag": "0005_pack_stock_reserve",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,670 @@
+{
+  "id": "52f9791a-93bc-4f4c-bbc4-a6ede3d28381",
+  "prevId": "2dcd3b89-6c9b-4b68-8899-7c6d0df33e47",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.dosage_regimens": {
+      "name": "dosage_regimens",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "dosage_regimens_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "medication_id": {
+          "name": "medication_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "effective_from": {
+          "name": "effective_from",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "morning": {
+          "name": "morning",
+          "type": "numeric(6, 1)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "noon": {
+          "name": "noon",
+          "type": "numeric(6, 1)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "evening": {
+          "name": "evening",
+          "type": "numeric(6, 1)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "dosage_regimens_medication_id_medications_id_fk": {
+          "name": "dosage_regimens_medication_id_medications_id_fk",
+          "tableFrom": "dosage_regimens",
+          "tableTo": "medications",
+          "columnsFrom": [
+            "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "dosage_regimens_medication_effective_from_key": {
+          "name": "dosage_regimens_medication_effective_from_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "medication_id",
+            "effective_from"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "dosage_regimens_non_negative": {
+          "name": "dosage_regimens_non_negative",
+          "value": "\"dosage_regimens\".\"morning\" >= 0 and \"dosage_regimens\".\"noon\" >= 0 and \"dosage_regimens\".\"evening\" >= 0"
+        },
+        "dosage_regimens_half_step": {
+          "name": "dosage_regimens_half_step",
+          "value": "morning * 2 = trunc(morning * 2) and noon * 2 = trunc(noon * 2) and evening * 2 = trunc(evening * 2)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.hospital_stays": {
+      "name": "hospital_stays",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "hospital_stays_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "start_date": {
+          "name": "start_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end_date": {
+          "name": "end_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "hospital_stays_order": {
+          "name": "hospital_stays_order",
+          "value": "\"hospital_stays\".\"end_date\" >= \"hospital_stays\".\"start_date\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.medication_packs": {
+      "name": "medication_packs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "medication_packs_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "medication_id": {
+          "name": "medication_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "brand": {
+          "name": "brand",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pack_unit": {
+          "name": "pack_unit",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'盒'"
+        },
+        "per_box": {
+          "name": "per_box",
+          "type": "numeric(7, 1)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "position": {
+          "name": "position",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "reserve": {
+          "name": "reserve",
+          "type": "numeric(10, 1)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "medication_packs_medication_idx": {
+          "name": "medication_packs_medication_idx",
+          "columns": [
+            {
+              "expression": "medication_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "position",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "medication_packs_medication_id_medications_id_fk": {
+          "name": "medication_packs_medication_id_medications_id_fk",
+          "tableFrom": "medication_packs",
+          "tableTo": "medications",
+          "columnsFrom": [
+            "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "medication_packs_pack_unit": {
+          "name": "medication_packs_pack_unit",
+          "value": "\"medication_packs\".\"pack_unit\" in ('盒', '瓶')"
+        },
+        "medication_packs_per_box_positive": {
+          "name": "medication_packs_per_box_positive",
+          "value": "\"medication_packs\".\"per_box\" > 0"
+        },
+        "medication_packs_per_box_half_step": {
+          "name": "medication_packs_per_box_half_step",
+          "value": "per_box * 2 = trunc(per_box * 2)"
+        },
+        "medication_packs_reserve_non_negative": {
+          "name": "medication_packs_reserve_non_negative",
+          "value": "\"medication_packs\".\"reserve\" >= 0"
+        },
+        "medication_packs_reserve_half_step": {
+          "name": "medication_packs_reserve_half_step",
+          "value": "reserve * 2 = trunc(reserve * 2)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.medications": {
+      "name": "medications",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "medications_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "brand": {
+          "name": "brand",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dosage": {
+          "name": "dosage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pack_unit": {
+          "name": "pack_unit",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'盒'"
+        },
+        "per_box": {
+          "name": "per_box",
+          "type": "numeric(7, 1)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reserve": {
+          "name": "reserve",
+          "type": "numeric(10, 1)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "tags": {
+          "name": "tags",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "medications_pack_unit": {
+          "name": "medications_pack_unit",
+          "value": "\"medications\".\"pack_unit\" in ('盒', '瓶')"
+        },
+        "medications_per_box_positive": {
+          "name": "medications_per_box_positive",
+          "value": "\"medications\".\"per_box\" > 0"
+        },
+        "medications_per_box_half_step": {
+          "name": "medications_per_box_half_step",
+          "value": "per_box * 2 = trunc(per_box * 2)"
+        },
+        "medications_reserve_non_negative": {
+          "name": "medications_reserve_non_negative",
+          "value": "\"medications\".\"reserve\" >= 0"
+        },
+        "medications_reserve_half_step": {
+          "name": "medications_reserve_half_step",
+          "value": "reserve * 2 = trunc(reserve * 2)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.stock_counts": {
+      "name": "stock_counts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "stock_counts_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "medication_id": {
+          "name": "medication_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slots_done": {
+          "name": "slots_done",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "numeric(10, 1)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pack_id": {
+          "name": "pack_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "stock_counts_medication_id_medications_id_fk": {
+          "name": "stock_counts_medication_id_medications_id_fk",
+          "tableFrom": "stock_counts",
+          "tableTo": "medications",
+          "columnsFrom": [
+            "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "stock_counts_pack_id_medication_packs_id_fk": {
+          "name": "stock_counts_pack_id_medication_packs_id_fk",
+          "tableFrom": "stock_counts",
+          "tableTo": "medication_packs",
+          "columnsFrom": [
+            "pack_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "stock_counts_medication_date_pack_key": {
+          "name": "stock_counts_medication_date_pack_key",
+          "nullsNotDistinct": true,
+          "columns": [
+            "medication_id",
+            "date",
+            "pack_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "stock_counts_slots_done": {
+          "name": "stock_counts_slots_done",
+          "value": "\"stock_counts\".\"slots_done\" between 0 and 3"
+        },
+        "stock_counts_quantity_non_negative": {
+          "name": "stock_counts_quantity_non_negative",
+          "value": "\"stock_counts\".\"quantity\" >= 0"
+        },
+        "stock_counts_quantity_half_step": {
+          "name": "stock_counts_quantity_half_step",
+          "value": "quantity * 2 = trunc(quantity * 2)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.supply_logs": {
+      "name": "supply_logs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "supply_logs_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "medication_id": {
+          "name": "medication_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "numeric(10, 1)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pack_id": {
+          "name": "pack_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "supply_logs_medication_date_idx": {
+          "name": "supply_logs_medication_date_idx",
+          "columns": [
+            {
+              "expression": "medication_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "supply_logs_medication_id_medications_id_fk": {
+          "name": "supply_logs_medication_id_medications_id_fk",
+          "tableFrom": "supply_logs",
+          "tableTo": "medications",
+          "columnsFrom": [
+            "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "supply_logs_pack_id_medication_packs_id_fk": {
+          "name": "supply_logs_pack_id_medication_packs_id_fk",
+          "tableFrom": "supply_logs",
+          "tableTo": "medication_packs",
+          "columnsFrom": [
+            "pack_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "supply_logs_quantity_positive": {
+          "name": "supply_logs_quantity_positive",
+          "value": "\"supply_logs\".\"quantity\" > 0"
+        },
+        "supply_logs_quantity_half_step": {
+          "name": "supply_logs_quantity_half_step",
+          "value": "quantity * 2 = trunc(quantity * 2)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.visits": {
+      "name": "visits",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "visits_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "visits_date_key": {
+          "name": "visits_date_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "date"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

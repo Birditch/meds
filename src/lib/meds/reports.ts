@@ -15,7 +15,8 @@ import {
   formatRegimen,
   intakeAt,
   isTaking,
-  medicationStatus,
+  packShares,
+  statusOf,
   type Intake,
   type MedicationStatus,
 } from "./format";
@@ -47,7 +48,7 @@ function evaluate(input: ReportInput) {
     const intake = intakeAt(m.regimens, input.now.date);
     return {
       medication: m,
-      status: medicationStatus(m.supplies, m.regimens, input.now, schedule, { pauses, perBox: m.perBox, counts: m.counts }),
+      status: statusOf(m, input.now, schedule, pauses),
       intake,
       taking: isTaking(intake),
     };
@@ -119,9 +120,27 @@ export function otherPacksText(need: Pick<VisitNeed, "need">, m: MedicationRecor
     .join("；");
 }
 
-/** "2026.11.07 周六 早上服药前盘点：剩 26 颗" */
+/** "2026.11.07 周六 早上服药前盘点：剩 26 颗", with the manufacturer counted when there are several. */
 export function countLines(m: MedicationRecord): string[] {
-  return m.counts.map((c) => `${fmtDate(c.date)} ${COUNT_MOMENT_LABEL[c.slotsDone]}盘点：剩 ${fmtQty(c.quantity)} 颗`);
+  return m.counts.map((c) => {
+    const whose = m.packs.length > 1 ? (c.packId ? `（${packOf(m, c.packId)?.brand ?? "未写厂家"}）` : "（全部厂家）") : "";
+    return `${fmtDate(c.date)} ${COUNT_MOMENT_LABEL[c.slotsDone]}盘点${whose}：剩 ${fmtQty(c.quantity)} 颗`;
+  });
+}
+
+/**
+ * Each manufacturer's share of the stock or the reserve, when there are several:
+ * "湖南洞庭 28 颗（2 盒）；江苏恩华 174 颗（8 盒 14 颗）". null for one manufacturer.
+ */
+export function packBreakdown(it: Pick<ReportItem, "medication" | "status">, of: "stock" | "reserve", separator = "；"): string | null {
+  if (it.medication.packs.length <= 1) return null;
+  return packShares(it.medication, it.status)
+    .map(({ pack, ...amounts }) => {
+      const n = amounts[of];
+      const packs = pack.perBox && n >= pack.perBox ? `（${fmtPacks(n, pack.perBox, pack.packUnit)}）` : "";
+      return `${pack.brand ?? "未写厂家"} ${fmtQty(n)} 颗${packs}`;
+    })
+    .join(separator);
 }
 
 /** "4 盒（26 颗）": packs to get, the pills actually lacking in brackets; pills only without a pack size. */

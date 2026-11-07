@@ -30,12 +30,12 @@ import {
   type ImportAmount,
   type ImportEntry,
 } from "@/lib/meds/import";
-import { balanceAt, regimenAt, type Dose, type Moment } from "@/lib/meds/simulate";
-import { PACK_UNITS, type MedicationRecord, type PackUnit } from "@/lib/meds/types";
+import { balanceAt, packBalancesAt, regimenAt, type Dose, type Moment } from "@/lib/meds/simulate";
+import { PACK_UNITS, type MedicationRecord, type PackRecord, type PackUnit } from "@/lib/meds/types";
 import { importSchema, medicationSchema, perBoxSchema, type ImportFields } from "@/lib/meds/validation";
 import { cn } from "@/lib/utils";
 import { DatePicker } from "./date-picker";
-import { FormError, SubmitButton, packLabel, useActionForm } from "./forms";
+import { FormError, SubmitButton, useActionForm } from "./forms";
 import { clearImportDraft, loadImportDraft, saveImportDraft } from "./import-draft";
 
 type Amount = { boxes: string; loose: string };
@@ -46,8 +46,8 @@ interface Row {
   /** Existing medication, or null for a new one. */
   medId: number | null;
   /**
-   * Existing medication: the pack (manufacturer) the pack size and boxes refer to, or "new" =
-   * add `brand` as another manufacturer of it. null for a new medication.
+   * Existing medication: the pack (manufacturer) the row is about — its size, stock and
+   * reserve — or "new" = add `brand` as another manufacturer of it. null for a new medication.
    */
   pack?: number | "new" | null;
   name: string;
@@ -82,17 +82,20 @@ const sameDose = (a: Dose, b: Dose) => a.morning === b.morning && a.noon === b.n
 let seq = 0;
 const nextKey = () => `row-${++seq}`;
 
-function existingRow(m: MedicationRecord): Row {
+const packKey = (m: MedicationRecord, p: PackRecord) => `med-${m.id}-${p.id}`;
+
+/** One existing pack (manufacturer) of a medication, nothing changed yet. */
+function existingRow(m: MedicationRecord, p: PackRecord = m.packs[0]): Row {
   return {
-    key: `med-${m.id}`,
+    key: packKey(m, p),
     medId: m.id,
-    pack: m.packs[0]?.id ?? null,
+    pack: p.id,
     name: m.name,
-    brand: m.brand ?? "",
+    brand: p.brand ?? "",
     dosage: m.dosage,
-    packUnit: m.packUnit,
+    packUnit: p.packUnit,
     readUnit: null,
-    perBox: m.perBox ? String(m.perBox) : "",
+    perBox: p.perBox ? String(p.perBox) : "",
     stock: emptyAmount,
     reserve: emptyAmount,
     doses: null,
@@ -100,6 +103,36 @@ function existingRow(m: MedicationRecord): Row {
     notes: [],
     choices: [],
   };
+}
+
+/** Every pack of every medication, a row each. */
+const existingRows = (meds: readonly MedicationRecord[]) => meds.flatMap((m) => m.packs.map((p) => existingRow(m, p)));
+
+/** A row adding `brand` as another manufacturer of `m`. */
+const newPackRow = (m: MedicationRecord, brand: string): Row => ({
+  ...existingRow(m),
+  key: nextKey(),
+  pack: "new",
+  brand: brand.trim(),
+  perBox: "",
+});
+
+/**
+ * The row for the manufacturer a line names (the default one when it names none), adding a row
+ * for a manufacturer the medication does not have yet. Returns the rows and that row's index.
+ */
+function rowFor(rows: Row[], m: MedicationRecord, brand: string): { rows: Row[]; index: number } {
+  const b = key(brand);
+  const pack = b ? m.packs.find((p) => key(p.brand) === b) : m.packs[0];
+  const index = pack
+    ? rows.findIndex((r) => r.key === packKey(m, pack))
+    : rows.findIndex((r) => r.medId === m.id && r.pack === "new" && key(r.brand) === b);
+  if (index >= 0) return { rows, index };
+  if (pack) return { rows: [...rows, existingRow(m, pack)], index: rows.length };
+  // Right after the medication's other rows.
+  const last = rows.findLastIndex((r) => r.medId === m.id);
+  const at = last < 0 ? rows.length : last + 1;
+  return { rows: [...rows.slice(0, at), newPackRow(m, brand), ...rows.slice(at)], index: at };
 }
 
 function newRow(e?: ImportEntry, notes: string[] = [], choices: number[] = []): Row {
@@ -122,36 +155,40 @@ function newRow(e?: ImportEntry, notes: string[] = [], choices: number[] = []): 
   };
 }
 
-/** A saved draft against today's list: rows of deleted medications go, new medications get a row. */
+/** A saved draft against today's list: rows of deleted medications / packs go, new packs get a row. */
 function restoreRows(saved: Row[], medications: MedicationRecord[]): Row[] {
   const byId = new Map(medications.map((m) => [m.id, m]));
+  const keys = new Set<string>();
   const kept = saved
     .filter((r) => r && typeof r.key === "string" && (r.medId === null || byId.has(r.medId)))
     .map((r) => {
       const m = r.medId === null ? null : byId.get(r.medId)!;
       const choices = (r.choices ?? []).filter((id) => byId.has(id));
       if (!m) return { ...r, choices };
-      const pack = r.pack === "new" ? null : (m.packs.find((p) => p.id === r.pack) ?? m.packs[0]);
-      return { ...r, name: m.name, dosage: m.dosage, choices, ...(pack ? { pack: pack.id, brand: pack.brand ?? "" } : {}) };
-    });
+      if (r.pack === "new") return { ...r, name: m.name, dosage: m.dosage, choices };
+      // A draft from before rows were per pack is about the default one.
+      const pack = m.packs.find((p) => p.id === r.pack) ?? m.packs[0];
+      return { ...r, key: packKey(m, pack), name: m.name, dosage: m.dosage, choices, pack: pack.id, brand: pack.brand ?? "" };
+    })
+    .filter((r) => !keys.has(r.key) && !!keys.add(r.key));
   // New-row keys continue after the restored ones.
   for (const r of kept) seq = Math.max(seq, Number(/^row-(\d+)$/.exec(r.key)?.[1] ?? 0));
-  return [...kept, ...medications.filter((m) => !kept.some((r) => r.medId === m.id)).map(existingRow)];
+  return [...kept, ...existingRows(medications).filter((r) => !keys.has(r.key))];
+}
+
+/** The stock the records give for the row's pack at the counted moment (0 for a new manufacturer). */
+function expectedStock(row: Row, med: MedicationRecord | undefined, status: MedicationStatus | undefined, at: Moment): number | null {
+  if (!med || !status) return null;
+  if (row.pack === "new") return 0;
+  if (med.packs.length <= 1) return balanceAt(status.sim, at);
+  const i = med.packs.findIndex((p) => p.id === row.pack);
+  return packBalancesAt(status.sim, at)[Math.max(0, i)] ?? 0;
 }
 
 /** "2026.11.07 周六 01:55" in Beijing time. */
 function savedAtText(ms: number) {
   const { date, minutes } = wallClock(new Date(ms));
   return `${fmtDate(date)} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
-}
-
-/** The row's pack, from the brand a line names: one of the medication's, or a new manufacturer. */
-function switchPack(row: Row, med: MedicationRecord, brand: string): Row {
-  const b = key(brand);
-  if (!b) return row;
-  const p = med.packs.find((x) => key(x.brand) === b);
-  if (p) return { ...row, pack: p.id, brand: p.brand ?? "", packUnit: p.packUnit, perBox: p.perBox ? String(p.perBox) : "" };
-  return { ...row, pack: "new", brand: brand.trim(), perBox: "" };
 }
 
 /** The pack an existing row is about (undefined for a new manufacturer). */
@@ -214,7 +251,7 @@ function build(row: Row, med: MedicationRecord | undefined, at: Moment, expected
     if (!target && !row.brand.trim()) return fail("请填写新厂家 / 品牌");
     const changed =
       count !== null ||
-      (reserve.value !== null && reserve.value !== med.reserve) ||
+      (reserve.value !== null && reserve.value !== (target?.reserve ?? 0)) ||
       !target ||
       perBox !== target.perBox ||
       row.packUnit !== target.packUnit ||
@@ -286,13 +323,13 @@ function BulkImportForm({
   const [restoredAt, setRestoredAt] = useState<number | null>(draft?.savedAt ?? null);
   const [text, setText] = useState(draft?.text ?? "");
   const [unread, setUnread] = useState<string[]>([]);
-  const [rows, setRows] = useState<Row[]>(() => (draft ? restoreRows(draft.rows, medications) : medications.map(existingRow)));
+  const [rows, setRows] = useState<Row[]>(() => (draft ? restoreRows(draft.rows, medications) : existingRows(medications)));
   const [at, setAt] = useState<Moment>(draft?.at ?? now);
   const { pending, error, setError, submit } = useActionForm();
   const byId = useMemo(() => new Map(medications.map((m) => [m.id, m])), [medications]);
 
   // Keep a draft while anything is filled in; an untouched form leaves none.
-  const pristine = useMemo(() => JSON.stringify(medications.map(existingRow)), [medications]);
+  const pristine = useMemo(() => JSON.stringify(existingRows(medications)), [medications]);
   const dirty = text.trim() !== "" || JSON.stringify(rows) !== pristine;
   const finished = useRef(false);
   useEffect(() => {
@@ -306,7 +343,7 @@ function BulkImportForm({
     setRestoredAt(null);
     setText("");
     setUnread([]);
-    setRows(medications.map(existingRow));
+    setRows(existingRows(medications));
     setAt(now);
     setError(null);
   };
@@ -316,15 +353,17 @@ function BulkImportForm({
     () =>
       new Map(
         rows.map((r) => {
-          const status = r.medId ? statuses.get(r.medId) : undefined;
-          const expected = status ? balanceAt(status.sim, at) : null;
-          return [r.key, build(r, r.medId ? byId.get(r.medId) : undefined, at, expected)];
+          const med = r.medId ? byId.get(r.medId) : undefined;
+          const expected = expectedStock(r, med, r.medId ? statuses.get(r.medId) : undefined, at);
+          return [r.key, build(r, med, at, expected)];
         }),
       ),
     [rows, byId, statuses, at],
   );
   const changes = rows.filter((r) => built.get(r.key)?.item);
   const newCount = changes.filter((r) => r.medId === null).length;
+  const medCount = (rs: Row[]) => new Set(rs.map((r) => r.medId ?? r.key)).size;
+  const updatedCount = medCount(changes.filter((r) => r.medId !== null));
   const missingPerBox = rows.filter((r) => !r.perBox.trim()).length;
   const firstError = rows.map((r) => ({ r, e: built.get(r.key)?.error })).find((x) => x.e);
 
@@ -336,8 +375,8 @@ function BulkImportForm({
   const recognize = () => {
     const entries = parseImportText(text);
     if (entries.length === 0) return setUnread(["没有可识别的内容：每行写一种药"]);
-    const next = medications.map(existingRow);
-    const seen = new Map<number, number>();
+    let next = existingRows(medications);
+    const seen = new Map<string, number>();
     const skipped: string[] = [];
     for (const e of entries) {
       if (!e.name) {
@@ -347,15 +386,15 @@ function BulkImportForm({
       const match = matchEntry(e, medications);
       if (match.kind === "match") {
         const notes = [...e.warnings];
-        const before = seen.get(match.id);
-        if (before) notes.push(`和第 ${before} 行是同一种药，按本行录入`);
-        seen.set(match.id, e.line);
-        const i = next.findIndex((r) => r.medId === match.id);
         const med = medications.find((m) => m.id === match.id)!;
-        if (e.brand) {
-          next[i] = switchPack(next[i], med, e.brand);
-          if (next[i].pack === "new") notes.push(`“${e.brand}”是这种药的新厂家，录入时会加为它的一个厂家（共用余量）`);
-        }
+        const found = rowFor(next, med, e.brand ?? "");
+        next = found.rows;
+        const i = found.index;
+        const before = seen.get(next[i].key);
+        if (before) notes.push(`和第 ${before} 行是同一种药的同一个厂家，按本行录入`);
+        seen.set(next[i].key, e.line);
+        if (next[i].pack === "new") notes.push(`“${e.brand}”是这种药的新厂家，录入时会加为它的一个厂家（余量和储备单独记）`);
+        else if (!e.brand && med.packs.length > 1) notes.push(`没写厂家，按默认厂家“${med.packs[0].brand ?? "未写厂家"}”录入；不对的话在清单里写上厂家`);
         const read = newRow(e);
         // A regimen the line repeats unchanged is not a change.
         const current = regimenAt(medications.find((m) => m.id === match.id)!.regimens, at.date);
@@ -374,26 +413,36 @@ function BulkImportForm({
     toast.success(`识别了 ${entries.length - skipped.length} 行`);
   };
 
-  /** A row read as new turns out to be an existing medication: fold it into that one. */
-  const assign = (key: string, medId: number) =>
+  /** A row read as new turns out to be an existing medication: fold it into that one (its manufacturer's row). */
+  const assign = (rowKey: string, medId: number) =>
     setRows((rs) => {
-      const from = rs.find((r) => r.key === key);
-      if (!from) return rs;
-      return rs
-        .filter((r) => r.key !== key)
-        .map((r) => {
-          if (r.medId !== medId) return r;
-          const med = medications.find((m) => m.id === medId);
-          const target = med && from.brand.trim() ? switchPack(r, med, from.brand) : r;
-          return fill(target, from, from.notes.filter((n) => !n.includes("新药") && !n.includes("选一种")));
-        });
+      const from = rs.find((r) => r.key === rowKey);
+      const med = medications.find((m) => m.id === medId);
+      if (!from || !med) return rs;
+      const found = rowFor(
+        rs.filter((r) => r.key !== rowKey),
+        med,
+        from.brand,
+      );
+      const notes = from.notes.filter((n) => !n.includes("新药") && !n.includes("选一种"));
+      return found.rows.map((r, i) => (i === found.index ? fill(r, from, notes) : r));
     });
 
+  // A line per manufacturer, with its own stock and reserve.
   const template = () =>
     importTemplate(
-      medications.map((m) => {
+      medications.flatMap((m) => {
         const s = statuses.get(m.id);
-        return { ...m, stock: s ? balanceAt(s.sim, at) : 0, regimen: regimenAt(m.regimens, at.date) };
+        const regimen = regimenAt(m.regimens, at.date);
+        return m.packs.map((p) => ({
+          ...m,
+          brand: p.brand,
+          packUnit: p.packUnit,
+          perBox: p.perBox,
+          stock: expectedStock(existingRow(m, p), m, s, at) ?? 0,
+          reserve: p.reserve,
+          regimen,
+        }));
       }),
     );
 
@@ -414,8 +463,7 @@ function BulkImportForm({
           () => {
             finished.current = true;
             clearImportDraft();
-            const updated = items.length - newCount;
-            toast.success(`已录入：${[updated && `更新 ${updated} 种`, newCount && `新增 ${newCount} 种`].filter(Boolean).join("，")}`);
+            toast.success(`已录入：${[updatedCount && `更新 ${updatedCount} 种`, newCount && `新增 ${newCount} 种`].filter(Boolean).join("，")}`);
             onDone();
           },
         );
@@ -533,7 +581,7 @@ function BulkImportForm({
           <div className="grid gap-0.5">
             <span className="text-sm font-medium">③ 核对</span>
             <span className="text-xs text-muted-foreground tabular-nums">
-              共 {rows.length} 种 · 将更新 {changes.length - newCount} 种 · 新增 {newCount} 种
+              共 {medCount(rows)} 种{rows.length > medCount(rows) ? `（${rows.length} 个厂家）` : ""} · 将更新 {updatedCount} 种 · 新增 {newCount} 种
               {missingPerBox > 0 && ` · ${missingPerBox} 种未写明每盒颗数`}
             </span>
           </div>
@@ -553,14 +601,18 @@ function BulkImportForm({
               key={r.key}
               row={r}
               med={r.medId ? byId.get(r.medId) : undefined}
-              status={r.medId ? statuses.get(r.medId) : undefined}
               built={built.get(r.key)!}
               at={at}
+              expected={expectedStock(r, r.medId ? byId.get(r.medId) : undefined, r.medId ? statuses.get(r.medId) : undefined, at)}
               medications={medications}
               onChange={(patch) => update(r.key, patch)}
               onAssign={(id) => assign(r.key, id)}
               onRemove={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}
-              onReset={() => r.medId && update(r.key, existingRow(byId.get(r.medId)!))}
+              onReset={() => {
+                const med = r.medId ? byId.get(r.medId) : undefined;
+                const pack = med?.packs.find((p) => p.id === r.pack);
+                if (med && pack) update(r.key, existingRow(med, pack));
+              }}
             />
           ))}
         </div>
@@ -570,12 +622,12 @@ function BulkImportForm({
         <FormError>{error}</FormError>
         <div className="flex items-center justify-end gap-2">
           <span className="mr-auto text-xs text-muted-foreground tabular-nums">
-            {changes.length ? `将录入 ${changes.length} 种药` : "还没有填写任何变动"}
+            {changes.length ? `将录入 ${medCount(changes)} 种药` : "还没有填写任何变动"}
           </span>
           <Button type="button" variant="ghost" onClick={onDone}>
             取消
           </Button>
-          <SubmitButton pending={pending}>一键录入{changes.length ? `（${changes.length}）` : ""}</SubmitButton>
+          <SubmitButton pending={pending}>一键录入{changes.length ? `（${medCount(changes)}）` : ""}</SubmitButton>
         </div>
       </div>
     </form>
@@ -638,8 +690,8 @@ const diffText = (to: number, from: number) => {
 function RowEditor({
   row,
   med,
-  status,
   built,
+  expected,
   at,
   medications,
   onChange,
@@ -649,8 +701,9 @@ function RowEditor({
 }: {
   row: Row;
   med: MedicationRecord | undefined;
-  status: MedicationStatus | undefined;
   built: Built;
+  /** The row's pack's stock by the records at the counted moment. */
+  expected: number | null;
   at: Moment;
   medications: MedicationRecord[];
   onChange: (patch: Partial<Row>) => void;
@@ -663,7 +716,6 @@ function RowEditor({
   const perBox = Number(row.perBox) > 0 ? Number(row.perBox) : null;
   const pack = { perBox, packUnit: row.packUnit };
   const changed = !!built.item;
-  const expected = status ? balanceAt(status.sim, at) : null;
   const current = med ? regimenAt(med.regimens, at.date) : null;
   const choices = row.choices
     .map((id) => medications.find((m) => m.id === id))
@@ -681,11 +733,12 @@ function RowEditor({
     ) : (
       "留空则不记余量"
     );
+  const had = target?.reserve ?? 0;
   const reserveHint =
     built.reserve !== null
-      ? `= ${fmtQty(built.reserve)} 颗${med ? `（原 ${fmtQty(med.reserve)} 颗）` : ""}`
+      ? `= ${fmtQty(built.reserve)} 颗${med ? `（原 ${fmtQty(had)} 颗）` : ""}`
       : med
-        ? `现有 ${fmtQty(med.reserve)} 颗 · 留空不变`
+        ? `现有 ${fmtQty(had)} 颗 · 留空不变`
         : "留空则为 0";
 
   return (
@@ -701,27 +754,16 @@ function RowEditor({
           <>
             <span className="font-medium">{med.name}</span>
             <span className="text-xs text-muted-foreground">{med.dosage}</span>
-            {med.packs.length > 1 || row.pack === "new" ? (
-              <select
-                aria-label="厂家 / 包装"
-                className="h-7 max-w-full rounded-md border border-input bg-transparent px-1.5 text-xs dark:bg-input/30"
-                value={String(row.pack ?? med.packs[0]?.id)}
-                onChange={(e) => {
-                  const p = med.packs.find((x) => String(x.id) === e.target.value);
-                  if (p) onChange({ pack: p.id, brand: p.brand ?? "", packUnit: p.packUnit, perBox: p.perBox ? String(p.perBox) : "" });
-                }}
-              >
-                {med.packs.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {packLabel(p)}
-                  </option>
-                ))}
-                {row.pack === "new" && <option value="new">新厂家：{row.brand}</option>}
-              </select>
-            ) : (
-              med.brand && <span className="text-xs text-muted-foreground">{med.brand}</span>
+            {(row.brand || med.packs.length > 1) && (
+              <span className={cn("text-xs", med.packs.length > 1 || row.pack === "new" ? "font-medium" : "text-muted-foreground")}>
+                {row.brand || "未写厂家"}
+              </span>
             )}
-            {row.pack === "new" && <Badge variant="outline">新增厂家</Badge>}
+            {row.pack === "new" ? (
+              <Badge variant="outline">新增厂家</Badge>
+            ) : (
+              med.packs.length > 1 && med.packs[0].id === row.pack && <Badge variant="secondary">默认</Badge>
+            )}
           </>
         ) : (
           <Badge>新增药品</Badge>
@@ -738,12 +780,12 @@ function RowEditor({
         {row.line !== null && <Badge variant="secondary">清单第 {row.line} 行</Badge>}
         <span className="ml-auto flex items-center gap-1">
           {!changed && !built.error && med && <span className="text-xs text-muted-foreground">不变</span>}
-          {med && changed && (
+          {med && changed && row.pack !== "new" && (
             <Button type="button" size="icon-sm" variant="ghost" aria-label={`撤销「${med.name}」的改动`} onClick={onReset}>
               <RotateCcwIcon />
             </Button>
           )}
-          {!med && (
+          {(!med || row.pack === "new") && (
             <Button type="button" size="icon-sm" variant="ghost" aria-label="移除这一行" onClick={onRemove}>
               <XIcon />
             </Button>

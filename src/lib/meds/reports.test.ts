@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  countLines,
   gapWarning,
   medicationLabel,
   otherPacksText,
+  packBreakdown,
   needReason,
   needText,
   purchaseLines,
@@ -27,7 +29,7 @@ const med = (
   dosage: "10mg",
   packUnit: "盒",
   perBox,
-  packs: [{ id: 1, brand: null, packUnit: "盒", perBox }],
+  packs: [{ id: 1, brand: null, packUnit: "盒", perBox, reserve }],
   reserve,
   tags: [],
   supplies: supplies.map(([date, quantity]) => ({ id: nextId++, date, quantity, packId: null, recordedAt: 0 })),
@@ -168,8 +170,8 @@ describe("manufacturers and tags", () => {
     dosage: "2mg",
     brand: "湖南洞庭",
     packs: [
-      { id: 7, brand: "湖南洞庭", packUnit: "盒", perBox: 14 },
-      { id: 8, brand: "江苏恩华", packUnit: "盒", perBox: 20 },
+      { id: 7, brand: "湖南洞庭", packUnit: "盒", perBox: 14, reserve: 0 },
+      { id: 8, brand: "江苏恩华", packUnit: "盒", perBox: 20, reserve: 0 },
     ],
     tags: ["psy2", "rx"],
     supplies: [{ id: 1, date: "2026-11-02", quantity: 40, packId: 8, recordedAt: 0 }],
@@ -178,6 +180,25 @@ describe("manufacturers and tags", () => {
   it("names every manufacturer and the one each purchase came from", () => {
     expect(medicationLabel(M)).toBe("氯硝西泮片 2mg · 湖南洞庭 / 江苏恩华");
     expect(purchaseLines(M, NOW.date)).toEqual(["2026.11.02 周一 购买 40 颗（2 盒 · 江苏恩华）"]);
+  });
+
+  it("splits the stock and the reserve by manufacturer, and names the one counted", () => {
+    const N: MedicationRecord = {
+      ...M,
+      packs: [
+        { id: 7, brand: "湖南洞庭", packUnit: "盒", perBox: 14, reserve: 28 },
+        { id: 8, brand: "江苏恩华", packUnit: "盒", perBox: 20, reserve: 174 },
+      ],
+      reserve: 202,
+      counts: [{ id: 3, date: "2026-11-03", slotsDone: 0, quantity: 30, recordedAt: 0, packId: 8 }],
+    };
+    const [item] = stockReport({ medications: [N], visits: [], stays: [], now: NOW }).items;
+    // 湖南洞庭 has none, so every evening dose comes out of 江苏恩华: counted 30 on 11-03, then 3 evenings.
+    expect(item.status.balanceNow).toBe(27);
+    expect(packBreakdown(item, "stock")).toBe("湖南洞庭 0 颗；江苏恩华 27 颗（1 盒 7 颗）");
+    expect(packBreakdown(item, "reserve")).toBe("湖南洞庭 28 颗（2 盒）；江苏恩华 174 颗（8 盒 14 颗）");
+    expect(countLines(N)).toEqual(["2026.11.03 周二 早上服药前盘点（江苏恩华）：剩 30 颗"]);
+    expect(packBreakdown({ ...item, medication: { ...N, packs: N.packs.slice(0, 1) } }, "reserve")).toBeNull();
   });
 
   it("counts the need in the other manufacturers' boxes too", () => {

@@ -71,7 +71,7 @@ export function ReportsBoard(data: MedsData) {
         <ReportCard
           icon={CalendarClockIcon}
           title="复诊开药清单"
-          description="复诊前一晚（周三晚）吃完后还剩多少，到下一次复诊（通常 4 周）还缺几盒（几颗）、缺的原因、要开的整盒数，以及购买和盘点记录。不含储备，未在吃的药单列。"
+          description="复诊前一晚（周三晚）吃完后还剩多少，到下一次复诊（通常 4 周）还缺几盒（几颗）、缺的原因、要开的整盒数，以及购买和盘点记录。不含储备，未在吃的药不列。"
           meta={upcoming.length ? `${taking.length} 种在吃的药参与计算` : undefined}
         >
           {upcoming.length === 0 ? (

@@ -12,6 +12,7 @@ import {
   needReason,
   needText,
   otherPacksText,
+  packBreakdown,
   packSize,
   packsText,
   prescriptionText,
@@ -275,7 +276,11 @@ const regimenCell = (it: ReportItem): Cell =>
     ? { text: formatRegimenShort(it.status.current), sub: `${fmtQty(dailyTotal(it.status.current))} 颗/天` }
     : { text: "未设置", color: MUTED };
 
-const pillsCell = (pills: number, m: ReportItem["medication"]): Cell => ({ text: `${fmtQty(pills)} 颗`, sub: packNote(pills, m) });
+/** The total, and under it each manufacturer's share (or, for one, the whole packs). */
+const pillsCell = (it: ReportItem, of: "stock" | "reserve"): Cell => {
+  const pills = of === "stock" ? it.status.balanceNow : it.medication.reserve;
+  return { text: `${fmtQty(pills)} 颗`, sub: packBreakdown(it, of, "\n") ?? packNote(pills, it.medication) };
+};
 
 const headline = (it: ReportItem) => it.status.conclusion.headline + (it.status.conclusion.detail ? `（${it.status.conclusion.detail}）` : "");
 
@@ -309,10 +314,7 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
     "只按现有药物计算，不含药物储备；每一次补药都视为一次购买。",
   ]);
 
-  w.paragraph(
-    `需开药 ${r.needed.length} 种，无需开药 ${r.covered.length} 种` + (r.inactive.length ? `，未在吃 ${r.inactive.length} 种（不需要开）。` : "。"),
-    { bold: true },
-  );
+  if (r.needed.length || r.covered.length) w.paragraph(`需开药 ${r.needed.length} 种，无需开药 ${r.covered.length} 种。`, { bold: true });
   const special = r.needed.filter((it) => specialRx(it.medication));
   if (special.length) {
     w.paragraph(
@@ -352,6 +354,8 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
       if (tags.length) w.field("标签", tags, specialRx(m) ? ALERT : undefined);
       w.field("服用规律", formatRegimen(it.status.current));
       w.field("现有药", headline(it));
+      const byPack = packBreakdown(it, "stock");
+      if (byPack) w.field("各厂家现有", byPack);
       w.field("复购原因", needReason(it, r, ctx.input.now));
       const others = otherPacksText(it.need, m);
       w.field("本次开药", others ? [`按${m.brand ? ` ${m.brand} ` : "默认厂家"}：${prescriptionText(it.need, m)}`, others] : prescriptionText(it.need, m));
@@ -389,12 +393,8 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
     );
   }
 
-  if (r.inactive.length) {
-    w.section(`未在吃（${r.inactive.length} 种）`, "已停药或没设服用规律，不需要开药。");
-    w.paragraph(r.inactive.map((it, i) => `${i + 1}. ${medicationLabel(it.medication)}（${intakeLabel(it.intake)}）`).join("\n"));
-  }
-
-  if (!r.needed.length && !r.covered.length && !r.inactive.length) w.paragraph("暂无药品。", { color: MUTED });
+  // Medications not being taken have nothing to get: left out.
+  if (!r.needed.length && !r.covered.length) w.paragraph("没有在吃的药，无需开药。", { color: MUTED });
   return w.finish();
 }
 
@@ -427,7 +427,7 @@ export async function renderStockPdf(r: StockReport, ctx: RenderContext): Promis
       { text: String(offset + i + 1) },
       nameCell(it.medication),
       regimenCell(it),
-      { ...pillsCell(it.status.balanceNow, it.medication), bold: true },
+      { ...pillsCell(it, "stock"), bold: true },
       {
         text: it.taking ? it.status.conclusion.badge : intakeLabel(it.intake)!,
         sub: it.taking ? it.status.conclusion.detail : it.intake.kind === "stopped" ? `${fmtDate(it.intake.since)} 起` : null,
@@ -446,6 +446,8 @@ export async function renderStockPdf(r: StockReport, ctx: RenderContext): Promis
     if (tags.length) w.field("标签", tags);
     w.field("服用规律", formatRegimen(it.status.current));
     w.field("现有药", headline(it));
+    const byPack = packBreakdown(it, "stock");
+    if (byPack) w.field("各厂家现有", byPack);
     const bought = purchaseLines(m, today);
     w.field("购买记录", bought.length ? bought : "暂无购买记录");
     const counted = countLines(m);
@@ -475,7 +477,7 @@ export async function renderReservePdf(r: ReserveReport, ctx: RenderContext): Pr
       r.items.map((it, i) => [
         { text: String(i + 1) },
         nameCell(it.medication),
-        { ...pillsCell(it.medication.reserve, it.medication), bold: true },
+        { ...pillsCell(it, "reserve"), bold: true },
         { text: it.lasts, sub: it.status.current ? formatRegimen(it.status.current) : null },
       ]),
     );
