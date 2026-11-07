@@ -26,6 +26,7 @@ import { EditMedicationForm, ReservePanel } from "./medication-dialogs";
 import { PackAmounts, PacksPanel } from "./packs";
 import { StatusBadge, toneText } from "./status-badge";
 import { StockChart } from "./stock-chart";
+import { DialogStrengthTabs, type StrengthSwitch } from "./strength-tabs";
 import { TagBadges } from "./tags";
 
 const momentLabel = ["今日服药前", "早上服药后", "中午服药后", "晚上服药后"] as const;
@@ -47,7 +48,9 @@ export function DetailDialog({
   visits,
   stays,
   onOpenChange,
-}: {
+  onPick,
+  ...switcher
+}: StrengthSwitch & {
   medication: MedicationRecord | null;
   status: MedicationStatus | null;
   now: Moment;
@@ -110,6 +113,17 @@ export function DetailDialog({
                   />
                 </div>
               </div>
+              <DialogStrengthTabs
+                medication={medication}
+                {...switcher}
+                onPick={
+                  onPick &&
+                  ((id) => {
+                    setPanel(null);
+                    onPick(id);
+                  })
+                }
+              />
             </DialogHeader>
 
             {panel === "edit" && (

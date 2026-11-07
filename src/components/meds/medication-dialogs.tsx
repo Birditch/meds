@@ -1,7 +1,7 @@
 "use client";
 
-import { CopyPlusIcon, PackagePlusIcon, TriangleAlertIcon } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { CopyIcon, CopyPlusIcon, PackagePlusIcon, TriangleAlertIcon } from "lucide-react";
+import { useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { addPack, addReserve, addSupply, createMedication, drawFromReserve, saveRegimen, setReserve, updateMedication } from "@/app/actions";
 import {
@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { DatePicker } from "./date-picker";
 import { DoseFields, FormError, PackPicker, RegimenForm, SubmitButton, SupplyForm, packLabel, parseDoses, useActionForm } from "./forms";
 import { SupplyAmountInput, amountInPacks, amountState, resolveAmount, type AmountState } from "./supply-amount";
+import { DialogStrengthTabs, type StrengthSwitch } from "./strength-tabs";
 import { TagBadges, TagPicker } from "./tags";
 
 type PackValues = { brand: string; packUnit: PackUnit; perBox: string };
@@ -43,7 +44,15 @@ const toPack = (v: PackValues) => ({ brand: v.brand, packUnit: v.packUnit, perBo
 const medTitle = (m: Pick<MedicationRecord, "name" | "dosage">) => `${m.name} ${m.dosage}`;
 const packsText = (m: MedicationRecord) => m.packs.map(packLabel).join("；");
 
-function NameInputs({ values, onChange }: { values: Pick<FieldValues, "name" | "dosage">; onChange: (v: Partial<FieldValues>) => void }) {
+function NameInputs({
+  values,
+  onChange,
+  dosageRef,
+}: {
+  values: Pick<FieldValues, "name" | "dosage">;
+  onChange: (v: Partial<FieldValues>) => void;
+  dosageRef?: React.Ref<HTMLInputElement>;
+}) {
   const uid = useId();
   return (
     <>
@@ -60,7 +69,14 @@ function NameInputs({ values, onChange }: { values: Pick<FieldValues, "name" | "
       </div>
       <div className="grid gap-2">
         <Label htmlFor={`${uid}-dosage`}>含量/规格</Label>
-        <Input id={`${uid}-dosage`} placeholder="如：2mg" value={values.dosage} onChange={(e) => onChange({ dosage: e.target.value })} required />
+        <Input
+          ref={dosageRef}
+          id={`${uid}-dosage`}
+          placeholder="如：2mg"
+          value={values.dosage}
+          onChange={(e) => onChange({ dosage: e.target.value })}
+          required
+        />
       </div>
     </>
   );
@@ -121,12 +137,17 @@ export function PackInputs({ values, onChange, brandRequired }: { values: PackVa
 /** Existing medications the one being typed may be, each with what to do instead of a duplicate. */
 function SimilarList({
   matches,
+  template,
   onAddPack,
   onSupply,
+  onTemplate,
 }: {
   matches: SimilarMatch<MedicationRecord>[];
+  /** The medication the form was filled from, if any. */
+  template: MedicationRecord | null;
   onAddPack: (m: MedicationRecord) => void;
   onSupply: (m: MedicationRecord) => void;
+  onTemplate: (m: MedicationRecord) => void;
 }) {
   if (!matches.length) return null;
   const strong = matches.some((x) => x.kind === "same");
@@ -146,7 +167,7 @@ function SimilarList({
         {matches.map(({ medication: m, kind, samePack }) => (
           <li key={m.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <Badge variant="outline" className={cn("font-normal", kind === "same" && "border-amber-400 text-amber-900 dark:text-amber-300")}>
-              {samePack ? "同一种药 · 同厂家" : SIMILARITY_LABEL[kind]}
+              {kind === "same" && samePack ? "同一种药 · 同厂家" : SIMILARITY_LABEL[kind]}
             </Badge>
             <span className="font-medium">{medTitle(m)}</span>
             <span className="min-w-0 text-xs text-muted-foreground">{packsText(m)}</span>
@@ -158,6 +179,12 @@ function SimilarList({
                   加为厂家
                 </Button>
               )}
+              {template?.id !== m.id && (
+                <Button type="button" size="xs" variant="ghost" title="照它填好名称、厂家、包装和标签，再改规格" onClick={() => onTemplate(m)}>
+                  <CopyIcon />
+                  作为模板
+                </Button>
+              )}
               <Button type="button" size="xs" variant="ghost" onClick={() => onSupply(m)}>
                 去补药
               </Button>
@@ -166,7 +193,7 @@ function SimilarList({
         ))}
       </ul>
       {matches.some((x) => x.kind === "strength") && (
-        <p className="text-xs text-muted-foreground">另一种规格（如 3mg / 6mg）是另一种药、余量分开算，照常新建即可；同名的药在列表里会排在一起。</p>
+        <p className="text-xs text-muted-foreground">另一种规格（如 3mg / 6mg）余量分开算，照常新建即可（可以先点“作为模板”）；它和已有的规格放在同一张卡片里，按规格分标签页。</p>
       )}
     </div>
   );
@@ -191,6 +218,9 @@ export function CreateMedicationDialog({
   const [tags, setTags] = useState<string[]>([]);
   /** Adding a manufacturer to this medication instead of a new medication. */
   const [target, setTarget] = useState<MedicationRecord | null>(null);
+  /** The existing medication the form was filled from (another strength of it, usually). */
+  const [template, setTemplate] = useState<MedicationRecord | null>(null);
+  const dosageRef = useRef<HTMLInputElement>(null);
   const [confirming, setConfirming] = useState<null | (() => void)>(null);
   const [startDate, setStartDate] = useState(today);
   const [amount, setAmount] = useState(() => amountState());
@@ -206,6 +236,7 @@ export function CreateMedicationDialog({
     setFields(emptyFields);
     setTags([]);
     setTarget(null);
+    setTemplate(null);
     setConfirming(null);
     setStartDate(today);
     setAmount(amountState());
@@ -237,6 +268,23 @@ export function CreateMedicationDialog({
     setTarget(m);
     // A brand that is already one of its packs is not a new manufacturer.
     if (m.packs.some((p) => (p.brand ?? "") === fields.brand.trim())) setFields((f) => ({ ...f, brand: "" }));
+  };
+
+  /** Fills the form from an existing medication: name, strength, its default pack and tags (not its stock or regimen). */
+  const fromTemplate = (m: MedicationRecord) => {
+    const perBox = m.perBox ? String(m.perBox) : "";
+    setFields({ name: m.name, dosage: m.dosage, brand: m.brand ?? "", packUnit: m.packUnit, perBox });
+    setTags(m.tags);
+    // Like typing the box size: the amounts (optional, left as they are) get it too.
+    setAmount((a) => ({ ...a, perBox }));
+    setReserveAmount((a) => ({ ...a, perBox }));
+    setTemplate(m);
+    setError(null);
+    // The strength is what usually changes: ready to type over.
+    requestAnimationFrame(() => {
+      dosageRef.current?.focus();
+      dosageRef.current?.select();
+    });
   };
 
   const savePack = (m: MedicationRecord) => {
@@ -281,8 +329,9 @@ export function CreateMedicationDialog({
           close();
         },
       );
-    // Still a new one although it looks like an existing medication: say so first.
-    if (matches.length) setConfirming(() => create);
+    // Still a new one although it looks like an existing medication: say so first. Filled from a
+    // template, the list was seen already: only the very same medication still asks.
+    if (matches.some((x) => x.kind === "same") || (matches.length > 0 && !template)) setConfirming(() => create);
     else create();
   };
 
@@ -337,9 +386,29 @@ export function CreateMedicationDialog({
               saveNew();
             }}
           >
+            {template && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-200">
+                <CopyIcon className="size-4 shrink-0" />
+                <span className="flex-1">
+                  已按「{medTitle(template)}」填好名称、规格、厂家、包装和标签；改成新的规格（含量）再添加。药量、规律和储备不会照抄。
+                </span>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => {
+                    setTemplate(null);
+                    setFields(emptyFields);
+                    setTags([]);
+                  }}
+                >
+                  清空
+                </Button>
+              </div>
+            )}
             <div className="grid gap-4 sm:grid-cols-2">
-              <NameInputs values={fields} onChange={onFields} />
-              <SimilarList matches={matches} onAddPack={startPack} onSupply={goSupply} />
+              <NameInputs values={fields} onChange={onFields} dosageRef={dosageRef} />
+              <SimilarList matches={matches} template={template} onAddPack={startPack} onSupply={goSupply} onTemplate={fromTemplate} />
               <PackInputs values={fields} onChange={onFields} />
             </div>
             <div className="grid gap-2">
@@ -468,7 +537,8 @@ export function AddSupplyDialog({
   today,
   pauses,
   visits,
-}: {
+  ...switcher
+}: StrengthSwitch & {
   medication: MedicationRecord | null;
   onOpenChange: (open: boolean) => void;
   today: ISODate;
@@ -483,6 +553,7 @@ export function AddSupplyDialog({
           <DialogTitle>补药</DialogTitle>
           <DialogDescription>{medication && medLabel(medication)}</DialogDescription>
         </DialogHeader>
+        <DialogStrengthTabs medication={medication} {...switcher} />
         {medication && (
           <SupplyForm
             key={medication.id}
@@ -507,7 +578,8 @@ export function RegimenDialog({
   medication,
   onOpenChange,
   today,
-}: {
+  ...switcher
+}: StrengthSwitch & {
   medication: MedicationRecord | null;
   onOpenChange: (open: boolean) => void;
   today: ISODate;
@@ -524,6 +596,7 @@ export function RegimenDialog({
             当前：{formatRegimen(current)}
           </DialogDescription>
         </DialogHeader>
+        <DialogStrengthTabs medication={medication} {...switcher} />
         {medication && (
           <RegimenForm
             key={medication.id}
@@ -550,7 +623,8 @@ export function ReserveDialog({
   medication,
   onOpenChange,
   today,
-}: {
+  ...switcher
+}: StrengthSwitch & {
   medication: MedicationRecord | null;
   onOpenChange: (open: boolean) => void;
   today: ISODate;
@@ -562,6 +636,7 @@ export function ReserveDialog({
           <DialogTitle>药物储备</DialogTitle>
           <DialogDescription>{medication && medLabel(medication)}</DialogDescription>
         </DialogHeader>
+        <DialogStrengthTabs medication={medication} {...switcher} />
         {medication && <ReservePanel key={medication.id} medication={medication} today={today} onDone={() => onOpenChange(false)} />}
       </DialogContent>
     </Dialog>

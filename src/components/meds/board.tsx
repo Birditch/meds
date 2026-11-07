@@ -20,9 +20,10 @@ import {
   packShares,
   type Intake,
   type MedicationStatus,
+  type Tone,
 } from "@/lib/meds/format";
 import { searchMedications } from "@/lib/meds/search";
-import { drugKey } from "@/lib/meds/similar";
+import { drugKey, groupStrengths, sortStrengths } from "@/lib/meds/similar";
 import { sortTags, tagLabel } from "@/lib/meds/tags";
 import type { MedicationRecord } from "@/lib/meds/types";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,7 @@ import { PageTitle } from "./page-title";
 import { packLabel } from "./forms";
 import { PackAmounts } from "./packs";
 import { StatusBadge, toneText } from "./status-badge";
+import { StrengthTabs } from "./strength-tabs";
 import { TONE_CLASS, TagBadges } from "./tags";
 import { useMeds, type MedsData } from "./use-meds";
 
@@ -62,6 +64,8 @@ export function Board(data: MedsData) {
   const [query, setQuery] = useState("");
   const [onlyNoPerBox, setOnlyNoPerBox] = useState(false);
   const [onlyTag, setOnlyTag] = useState<string | null>(null);
+  /** The strength shown on each drug's card (by drugKey); its first one otherwise. */
+  const [picked, setPicked] = useState<Record<string, number>>({});
   const hasImportDraft = useHasImportDraft();
   const searchParams = useSearchParams();
   const tab: Tab = searchParams.get("tab") === "inactive" ? "inactive" : "active";
@@ -78,21 +82,43 @@ export function Board(data: MedsData) {
   const tagCounts = sortTags(medications.flatMap((m) => m.tags)).map((t) => [t, inTab.filter((m) => m.tags.includes(t)).length] as const);
   const filterTag = onlyTag && medications.some((m) => m.tags.includes(onlyTag)) ? onlyTag : null;
   const filtering = filterNoPerBox || filterTag !== null || query.trim() !== "";
+  // One card per drug: its strengths (3mg / 6mg) are tabs on it.
   const match = (list: MedicationRecord[]) =>
-    groupByDrug(
+    groupStrengths(
       searchMedications(
         list.filter((m) => (!filterNoPerBox || !m.perBox) && (!filterTag || m.tags.includes(filterTag))),
         query,
       ),
-      query.trim() === "",
     );
   const matches = { active: match(taking), inactive: match(notTaking) };
   const shown = matches[tab];
   const other: Tab = tab === "active" ? "inactive" : "active";
+  const count = (t: Tab) => matches[t].reduce((n, g) => n + g.length, 0);
+
+  /** Every strength of a medication's drug, in or out of this tab, for the dialogs' tabs. */
+  const strengthsOf = (m: MedicationRecord | null) =>
+    m ? sortStrengths(medications.filter((x) => drugKey(x.name) === drugKey(m.name))) : [];
+  const toneOf = (m: MedicationRecord): Tone | null => {
+    const s = statuses.get(m.id);
+    if (!s) return null;
+    if (s.conclusion.tone === "danger") return "danger";
+    return s.conclusion.tone === "warn" || s.plan.beforeFirst || s.shortfall ? "warn" : null;
+  };
+  const pick = (id: number) => {
+    const m = medications.find((x) => x.id === id);
+    if (m) setPicked((p) => ({ ...p, [drugKey(m.name)]: id }));
+  };
+  /** Another strength in an open dialog: the dialog and the card follow. */
+  const switchTo = (id: number) => {
+    pick(id);
+    setPanel((p) => p && { ...p, id });
+  };
 
   const open = (kind: NonNullable<Panel>["kind"]) => (panel?.kind === kind ? medications.find((m) => m.id === panel.id) ?? null : null);
   const close = (o: boolean) => !o && setPanel(null);
   const detail = open("detail");
+  const current = panel ? (medications.find((m) => m.id === panel.id) ?? null) : null;
+  const strengths = { strengths: strengthsOf(current), onPick: switchTo, tone: toneOf };
 
   return (
     <>
@@ -162,7 +188,7 @@ export function Board(data: MedsData) {
               >
                 {TAB_LABEL[t]}
                 <span className={cn("text-xs tabular-nums", tab === t ? "opacity-80" : "")}>
-                  {filtering ? matches[t].length : t === "active" ? taking.length : notTaking.length}
+                  {filtering ? count(t) : t === "active" ? taking.length : notTaking.length}
                 </span>
               </a>
             ))}
@@ -247,9 +273,9 @@ export function Board(data: MedsData) {
                 : "没有未在吃的药。把一种药的服用规律改成早、中、晚都是 0（停药），它就会归到这里。"}
           </p>
           <div className="flex flex-wrap justify-center gap-2">
-            {matches[other].length > 0 && (
+            {count(other) > 0 && (
               <Button variant="outline" size="sm" onClick={() => showTab(other)}>
-                {filtering ? `“${TAB_LABEL[other]}”里有 ${matches[other].length} 个匹配` : `查看${TAB_LABEL[other]}的 ${matches[other].length} 种药`}
+                {filtering ? `“${TAB_LABEL[other]}”里有 ${count(other)} 个匹配` : `查看${TAB_LABEL[other]}的 ${count(other)} 种药`}
               </Button>
             )}
             {filtering && (
@@ -269,18 +295,25 @@ export function Board(data: MedsData) {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {shown.map((m) => (
-            <MedicationCard
-              key={m.id}
-              medication={m}
-              status={statuses.get(m.id)!}
-              intake={intakes.get(m.id)!}
-              onSupply={() => setPanel({ kind: "supply", id: m.id })}
-              onRegimen={() => setPanel({ kind: "regimen", id: m.id })}
-              onReserve={() => setPanel({ kind: "reserve", id: m.id })}
-              onDetail={() => setPanel({ kind: "detail", id: m.id })}
-            />
-          ))}
+          {shown.map((group) => {
+            const key = drugKey(group[0].name);
+            const m = group.find((x) => x.id === picked[key]) ?? group[0];
+            return (
+              <MedicationCard
+                key={key}
+                medication={m}
+                strengths={group}
+                onPick={pick}
+                tone={toneOf}
+                status={statuses.get(m.id)!}
+                intake={intakes.get(m.id)!}
+                onSupply={() => setPanel({ kind: "supply", id: m.id })}
+                onRegimen={() => setPanel({ kind: "regimen", id: m.id })}
+                onReserve={() => setPanel({ kind: "reserve", id: m.id })}
+                onDetail={() => setPanel({ kind: "detail", id: m.id })}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -292,10 +325,11 @@ export function Board(data: MedsData) {
         onSupply={(id) => setPanel({ kind: "supply", id })}
       />
       <BulkImportDialog open={importing} onOpenChange={setImporting} medications={medications} statuses={statuses} now={now} />
-      <AddSupplyDialog medication={open("supply")} onOpenChange={close} today={clock.date} pauses={pauses} visits={upcoming} />
-      <RegimenDialog medication={open("regimen")} onOpenChange={close} today={clock.date} />
-      <ReserveDialog medication={open("reserve")} onOpenChange={close} today={clock.date} />
+      <AddSupplyDialog medication={open("supply")} onOpenChange={close} today={clock.date} pauses={pauses} visits={upcoming} {...strengths} />
+      <RegimenDialog medication={open("regimen")} onOpenChange={close} today={clock.date} {...strengths} />
+      <ReserveDialog medication={open("reserve")} onOpenChange={close} today={clock.date} {...strengths} />
       <DetailDialog
+        {...strengths}
         medication={detail}
         status={detail ? statuses.get(detail.id) ?? null : null}
         now={now}
@@ -305,17 +339,6 @@ export function Board(data: MedsData) {
       />
     </>
   );
-}
-
-/** Strengths of one drug next to each other, where the first of them is (when not ranked by a search). */
-function groupByDrug(list: MedicationRecord[], group: boolean): MedicationRecord[] {
-  if (!group) return list;
-  const groups = new Map<string, MedicationRecord[]>();
-  for (const m of list) {
-    const k = drugKey(m.name);
-    groups.set(k, [...(groups.get(k) ?? []), m]);
-  }
-  return [...groups.values()].flat();
 }
 
 const noPerBoxTag =
@@ -332,6 +355,9 @@ function Row({ label, children }: { label: React.ReactNode; children: React.Reac
 
 function MedicationCard({
   medication,
+  strengths,
+  onPick,
+  tone,
   status,
   intake,
   onSupply,
@@ -340,6 +366,10 @@ function MedicationCard({
   onDetail,
 }: {
   medication: MedicationRecord;
+  /** The drug's strengths on this card (just `medication` when it has one). */
+  strengths: readonly MedicationRecord[];
+  onPick: (id: number) => void;
+  tone: (m: MedicationRecord) => Tone | null;
   status: MedicationStatus;
   intake: Intake;
   onSupply: () => void;
@@ -362,7 +392,7 @@ function MedicationCard({
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
           <CardTitle className="text-lg">
-            {medication.name} <span className="font-normal text-muted-foreground">{medication.dosage}</span>
+            {medication.name} {strengths.length < 2 && <span className="font-normal text-muted-foreground">{medication.dosage}</span>}
           </CardTitle>
           {intakeNote && (
             <Badge
@@ -379,6 +409,7 @@ function MedicationCard({
             </Badge>
           )}
         </div>
+        <StrengthTabs strengths={strengths} value={medication.id} onChange={onPick} tone={tone} />
         <CardDescription className="grid gap-1.5">
           <span>
             {medication.packs.length > 1

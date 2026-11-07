@@ -14,13 +14,17 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   manufacturer bought, a count can be of one manufacturer, and the doses are taken from the
   default one (first) until it is empty, then from the next (设为默认 changes which). The card,
   the detail view and the PDFs show the total with each manufacturer's share under it. The
-  default one also counts the boxes for a visit (the others' box counts are shown next to it). Another strength (帕利哌酮缓释片 3mg / 6mg) is another medication; strengths of
-  the same drug sit next to each other on the board. Every remaining amount is also shown in packs,
+  default one also counts the boxes for a visit (the others' box counts are shown next to it). Another strength (帕利哌酮缓释片 3mg / 6mg) is another medication with its own
+  stock; the strengths of one drug (same ingredient and dosage form) share one card with a tab
+  per strength (a dot marks one that needs attention), and 补药 / 管理储备 / 改规律 / 详情 have the
+  same tabs. Every remaining amount is also shown in packs,
   e.g. `合 6 瓶 14 颗`.
 - **Duplicate check when adding**: typing a name looks up existing medications (name, brand,
   pinyin, salt and dosage form aware: 盐酸普萘洛尔片 and 普萘洛尔片 are the same drug, 缓释片 is another
-  form) and offers to add the new one as a manufacturer of an existing medication or to go to its
-  supplies instead; creating it anyway asks for confirmation first.
+  form) and offers to add the new one as a manufacturer of an existing medication, to go to its
+  supplies instead, or **作为模板**: fill the form from it (name, strength, default pack, tags; not
+  its stock, regimen or reserve) to change the strength. Creating it anyway asks for confirmation
+  first (after a template, only when it is still the very same medication).
 - **Tags (标签)**: a catalog of the categories a prescription depends on — 麻醉药品 / 第一类 / 第二类精神药品,
   医疗用毒性 / 放射性 / 易制毒 / 含兴奋剂, 处方药 / 非处方药 (甲类 / 乙类), 医保甲 / 乙类 / 自费 / 门诊慢特病,
   基药 / 集采 / 国谈 / 双通道, 进口 / 国产, 原研 / 仿制 / 过评, the antibacterial grades, storage and use

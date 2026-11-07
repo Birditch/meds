@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { drugKey, drugName, findSimilar, sameDosage } from "./similar";
+import { dosageMg, drugKey, drugName, findSimilar, groupStrengths, sameDosage, sortStrengths } from "./similar";
 
 const med = (id: number, name: string, dosage: string, brands: (string | null)[] = [null], searchKeys: string[] = []) => ({
   id,
@@ -74,5 +74,31 @@ describe("findSimilar", () => {
     expect(kinds({ name: "芮达" }).map(([id]) => id)).toEqual([13, 15]);
     expect(kinds({ name: "dxhs" })).toEqual([[10, "similar"]]);
     expect(kinds({ name: "阿莫西林" })).toEqual([]);
+  });
+});
+
+describe("strengths of one drug", () => {
+  it("reads a strength in mg", () => {
+    expect(dosageMg("0.1g")).toBe(100);
+    expect(dosageMg("500μg")).toBe(0.5);
+    expect(dosageMg("40")).toBe(40);
+    expect(dosageMg("6mg/片")).toBe(6);
+    expect(dosageMg("每片")).toBeNull();
+  });
+
+  it("puts the strengths of one drug and form on one card, lowest first, where the first one is", () => {
+    const list = [
+      { id: 1, name: "帕利哌酮缓释片", dosage: "6mg" },
+      { id: 2, name: "盐酸普萘洛尔片", dosage: "10mg" },
+      { id: 3, name: "帕利哌酮缓释片", dosage: "3mg" },
+      { id: 4, name: "盐酸普萘洛尔缓释片", dosage: "40" },
+      { id: 5, name: "普萘洛尔片", dosage: "0.02g" },
+    ];
+    expect(groupStrengths(list).map((g) => g.map((m) => m.id))).toEqual([[3, 1], [2, 5], [4]]);
+    expect(sortStrengths([{ dosage: "规格不详" }, { dosage: "1g" }, { dosage: "250mg" }]).map((m) => m.dosage)).toEqual([
+      "250mg",
+      "1g",
+      "规格不详",
+    ]);
   });
 });

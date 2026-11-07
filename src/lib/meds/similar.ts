@@ -92,6 +92,36 @@ export function sameDosage(a: string, b: string): boolean {
   return la[2] === lb[2] || !la[2] || !lb[2];
 }
 
+/** A strength in mg (0.1g → 100, 500μg → 0.5, "40" → 40), or null when it is not a mass. */
+export function dosageMg(dosage: string): number | null {
+  const m = /^(\d+(?:\.\d+)?)(mg|g|μg|µg|ug|mcg|毫克|克|微克)?(?![a-z])/.exec(clean(dosage));
+  return m ? Number(m[1]) * (m[2] ? MASS[m[2]] : 1) : null;
+}
+
+/** Strengths of one drug, lowest first (unreadable ones last, by text). */
+export function sortStrengths<T extends { dosage: string }>(list: readonly T[]): T[] {
+  return [...list].sort((a, b) => {
+    const x = dosageMg(a.dosage);
+    const y = dosageMg(b.dosage);
+    if (x !== null && y !== null && x !== y) return x - y;
+    if ((x === null) !== (y === null)) return x === null ? 1 : -1;
+    return a.dosage.localeCompare(b.dosage, "zh");
+  });
+}
+
+/**
+ * The medications in groups of one drug (same ingredient and form, any strength), each group
+ * where its first member is and sorted by strength.
+ */
+export function groupStrengths<T extends { name: string; dosage: string }>(list: readonly T[]): T[][] {
+  const groups = new Map<string, T[]>();
+  for (const m of list) {
+    const k = drugKey(m.name);
+    groups.set(k, [...(groups.get(k) ?? []), m]);
+  }
+  return [...groups.values()].map(sortStrengths);
+}
+
 export type Similarity =
   /** Same drug, form and strength: it is this medication (add a manufacturer instead). */
   | "same"
