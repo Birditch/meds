@@ -38,13 +38,11 @@ export const TAG_GROUPS: { id: TagGroupId; title: string }[] = [
   { id: "use", title: "用法 / 注意" },
 ];
 
-const SPECIAL_RX = "需专用处方，单张处方用量受限，开药前和医生确认够吃到下次复诊";
-
 export const TAGS: TagDef[] = [
   // 特殊管理
-  { code: "narcotic", label: "麻醉药品", short: "麻", group: "control", set: "psy", tone: "red", aliases: ["麻醉", "麻醉药", "麻"], note: `${SPECIAL_RX}（淡红色处方，标“麻、精一”）` },
-  { code: "psy1", label: "第一类精神药品", short: "精一", group: "control", set: "psy", tone: "red", aliases: ["精一", "一类精神", "第一类精神", "一类精神药品", "一精"], note: `${SPECIAL_RX}（淡红色处方，标“麻、精一”）` },
-  { code: "psy2", label: "第二类精神药品", short: "精二", group: "control", set: "psy", tone: "amber", aliases: ["精二", "二类精神", "第二类精神", "二类精神药品", "二精"], note: `${SPECIAL_RX}（白色处方，标“精二”；一般每张不超过 7 日用量，慢性病可适当延长，需医生注明理由）` },
+  { code: "narcotic", label: "麻醉药品", short: "麻", group: "control", set: "psy", tone: "red", aliases: ["麻醉", "麻醉药", "麻"], note: "需专用处方（淡红色）" },
+  { code: "psy1", label: "第一类精神药品", short: "精一", group: "control", set: "psy", tone: "red", aliases: ["精一", "一类精神", "第一类精神", "一类精神药品", "一精"], note: "需专用处方（淡红色）" },
+  { code: "psy2", label: "第二类精神药品", short: "精二", group: "control", set: "psy", tone: "amber", aliases: ["精二", "二类精神", "第二类精神", "二类精神药品", "二精"], note: "需专用处方（白色）" },
   { code: "toxic", label: "医疗用毒性药品", short: "毒", group: "control", tone: "red", aliases: ["毒性药品", "毒性", "医疗用毒性"] },
   { code: "radioactive", label: "放射性药品", short: "放", group: "control", tone: "violet", aliases: ["放射性", "放射"] },
   { code: "precursor", label: "药品类易制毒化学品", short: "易制毒", group: "control", tone: "orange", aliases: ["易制毒", "易制毒化学品"] },

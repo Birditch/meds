@@ -29,8 +29,9 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   医疗用毒性 / 放射性 / 易制毒 / 含兴奋剂, 处方药 / 非处方药 (甲类 / 乙类), 医保甲 / 乙类 / 自费 / 门诊慢特病,
   基药 / 集采 / 国谈 / 双通道, 进口 / 国产, 原研 / 仿制 / 过评, the antibacterial grades, storage and use
   notes — plus your own. Tags of one kind exclude each other (精一 or 精二, Rx or OTC). They show on
-  the cards, filter the board, are searchable, and the visit PDF flags 麻 / 精一 / 精二 medications that
-  need a special prescription with a limited quantity.
+  the cards, filter the board and are searchable. The PDFs print only the tags that matter when
+  getting the medication (麻 / 精一 / 精二 / 毒 / 易制毒…, 进口, and your own); the visit PDF lists the
+  ones that need a special prescription.
 - **Supply logs**: `+N` pills on any date (whole or 0.5), counted before that day's morning dose;
   enter a pill count or packs × pills per pack plus loose pills from an opened pack, or **按日期**:
   pick the evening it should last to (default: the day before the next visit, with a chip for

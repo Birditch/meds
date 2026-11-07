@@ -19,7 +19,6 @@ import {
   purchaseLines,
   specialRx,
   specialRxText,
-  tagLines,
   tagsText,
   type ReportInput,
   type ReportItem,
@@ -309,24 +308,18 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
     visitToday
       ? `库存按现在（${COUNT_MOMENT_LABEL[ctx.input.now.slotsDone]}）计算`
       : `库存截止：${fmtDate(r.cutoff)} 晚上服药后`,
-    `开药要够：${fmtDate(r.date)} 起，吃到 ${fmtDate(r.coverUntil)} 晚上，共 ${spanText(r.days)}` +
-      (r.estimated ? "（未录入再下一次复诊，按 4 周后的周四估算）" : r.following ? `（再下一次复诊 ${fmtDate(r.following)}）` : ""),
-    "只按现有药物计算，不含药物储备；每一次补药都视为一次购买。",
+    `开药要够：${fmtDate(r.date)} 起，吃到 ${fmtDate(r.coverUntil)} 晚上，共 ${r.estimated ? `${period}（估算）` : spanText(r.days)}`,
   ]);
 
   if (r.needed.length || r.covered.length) w.paragraph(`需开药 ${r.needed.length} 种，无需开药 ${r.covered.length} 种。`, { bold: true });
   const special = r.needed.filter((it) => specialRx(it.medication));
   if (special.length) {
-    w.paragraph(
-      `其中 ${special.length} 种是麻醉 / 精神类特殊管理药品（${special.map((it) => `${it.medication.name}（${specialRxText(it.medication)}）`).join("、")}）：` +
-        "需开专用处方，单张处方用量受限（精二一般每张不超过 7 日用量，慢性病可适当延长、需医生注明），请提前和医生确认能开够到下次复诊。",
-      { color: ALERT },
-    );
+    w.paragraph(`需专用处方：${special.map((it) => `${it.medication.name}（${specialRxText(it.medication)}）`).join("、")}`, { color: ALERT });
   }
 
   if (r.needed.length) {
     w.table(
-      { title: `需开药品（${r.needed.length} 种）`, note: "“需开”是缺少的盒数，括号里是缺少的颗数；未写明每盒颗数的药只按颗计。" },
+      { title: `需开药品（${r.needed.length} 种）` },
       [
         { header: "#", width: 4, align: "center" },
         { header: "药品", width: 30 },
@@ -349,10 +342,7 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
     r.needed.forEach((it, i) => {
       const m = it.medication;
       w.itemHeading(`${i + 1}. ${medicationLabel(m)}`, { text: `缺 ${needText(it.need, m)}`, color: ALERT });
-      w.field(m.packs.length > 1 ? "厂家/包装" : "规格", packSize(m) || m.packs.length > 1 ? packsText(m) : `未写明每${m.packUnit}颗数（按颗计）`);
-      const tags = tagLines(m);
-      if (tags.length) w.field("标签", tags, specialRx(m) ? ALERT : undefined);
-      w.field("服用规律", formatRegimen(it.status.current));
+      if (m.packs.length > 1) w.field("厂家/包装", packsText(m));
       w.field("现有药", headline(it));
       const byPack = packBreakdown(it, "stock");
       if (byPack) w.field("各厂家现有", byPack);
@@ -371,7 +361,7 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
 
   if (r.covered.length) {
     w.table(
-      { title: `本次无需开药（${r.covered.length} 种）`, note: `现有药够吃到 ${fmtDate(r.coverUntil)} 晚上。` },
+      { title: `本次无需开药（${r.covered.length} 种）` },
       [
         { header: "#", width: 4, align: "center" },
         { header: "药品", width: 36 },
@@ -404,7 +394,6 @@ export async function renderStockPdf(r: StockReport, ctx: RenderContext): Promis
   w.header([
     `截至：${nowText(ctx)}`,
     `共 ${r.items.length} 种药品${r.nextVisit ? `；下次复诊 ${fmtDate(r.nextVisit)}` : ""}`,
-    "只列现有药物，不含药物储备（储备见《药品储备清单》）；每一次补药都视为一次购买。",
   ]);
 
   if (!r.items.length) {
@@ -435,16 +424,13 @@ export async function renderStockPdf(r: StockReport, ctx: RenderContext): Promis
       },
     ]);
   if (taking.length) w.table({ title: `在吃（${taking.length} 种）` }, columns, rows(taking, 0));
-  if (inactive.length) w.table({ title: `未在吃（${inactive.length} 种）`, note: "已停药或没设服用规律。" }, columns, rows(inactive, taking.length));
+  if (inactive.length) w.table({ title: `未在吃（${inactive.length} 种）` }, columns, rows(inactive, taking.length));
 
   w.section("购买与盘点记录");
   r.items.forEach((it, i) => {
     const m = it.medication;
     w.itemHeading(`${i + 1}. ${medicationLabel(m)}`, { text: `现有 ${fmtQty(it.status.balanceNow)} 颗` });
-    w.field(m.packs.length > 1 ? "厂家/包装" : "规格", packSize(m) || m.packs.length > 1 ? packsText(m) : `未写明每${m.packUnit}颗数`);
-    const tags = tagLines(m);
-    if (tags.length) w.field("标签", tags);
-    w.field("服用规律", formatRegimen(it.status.current));
+    if (m.packs.length > 1) w.field("厂家/包装", packsText(m));
     w.field("现有药", headline(it));
     const byPack = packBreakdown(it, "stock");
     if (byPack) w.field("各厂家现有", byPack);
@@ -462,7 +448,6 @@ export async function renderReservePdf(r: ReserveReport, ctx: RenderContext): Pr
   w.header([
     `截至：${nowText(ctx)}`,
     `有储备 ${r.items.length} 种，无储备 ${r.empty.length} 种`,
-    "储备是另外存放的药，不计入现有库存，也不计入复诊开药量（现有药见《药品现有清单》）。",
   ]);
 
   if (r.items.length) {

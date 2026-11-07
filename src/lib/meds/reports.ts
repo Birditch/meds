@@ -6,7 +6,7 @@
  * Every supply log counts as a purchase.
  */
 
-import { addDays, diffDays, fmtDate, type ISODate } from "./dates";
+import { addDays, diffDays, fmtDate, weekdayCN, type ISODate } from "./dates";
 import {
   COUNT_MOMENT_LABEL,
   describeReserve,
@@ -23,7 +23,7 @@ import {
 import { dailyTotal, type Moment } from "./simulate";
 import { isSpecialRx, tagDef, tagLabel } from "./tags";
 import type { MedicationRecord, PackRecord, StayRecord, VisitRecord } from "./types";
-import { scheduleVisits, spanText, type VisitNeed } from "./visits";
+import { scheduleVisits, type VisitNeed } from "./visits";
 
 export interface ReportInput {
   medications: readonly MedicationRecord[];
@@ -74,15 +74,14 @@ export function packsText(m: MedicationRecord): string {
     .join("；");
 }
 
-/** "精二 · 处方药" */
-export const tagsText = (m: Pick<MedicationRecord, "tags">) => m.tags.map((t) => tagLabel(t).short).join(" · ");
+/** Tags worth printing on a list: what limits getting it (精二, 易制毒…), 进口, and the user's own words. */
+const listed = (t: string) => {
+  const d = tagDef(t);
+  return !d || (d.group === "control" && t !== "doping") || t === "imported";
+};
 
-/** The tags' full names, then what the special ones mean for the prescription. */
-export function tagLines(m: Pick<MedicationRecord, "tags">): string[] {
-  if (!m.tags.length) return [];
-  const notes = m.tags.flatMap((t) => (tagDef(t)?.note ? [`${tagLabel(t).label}：${tagDef(t)!.note}`] : []));
-  return [m.tags.map((t) => tagLabel(t).label).join("、"), ...notes];
-}
+/** "精二 · 进口": the listed tags' short names. */
+export const tagsText = (m: Pick<MedicationRecord, "tags">) => m.tags.filter(listed).map((t) => tagLabel(t).short).join(" · ");
 
 export const specialRx = (m: Pick<MedicationRecord, "tags">) => isSpecialRx(m.tags);
 
@@ -199,29 +198,27 @@ export function visitReport(input: ReportInput, date?: ISODate): VisitReport | n
 /** Why this medication has to be got again, with the numbers. */
 export function needReason(item: VisitItem, report: VisitReport, now: Moment): string {
   const { need } = item;
-  const left = report.date === now.date ? `现在剩 ${fmtQty(need.stockBefore)} 颗` : `${fmtDate(report.cutoff)} 晚上吃完后剩 ${fmtQty(need.stockBefore)} 颗`;
-  const supplied = need.supplied > 0 ? `，期间已记的补药 ${fmtQty(need.supplied)} 颗也算上了` : "";
-  return (
-    `不够了：${left}；从 ${fmtDate(report.date)} 吃到 ${fmtDate(report.coverUntil)} 晚上共 ${spanText(report.days)}，` +
-    `按规律需 ${fmtQty(need.demand)} 颗${supplied}，缺 ${fmtQty(need.need)} 颗。`
-  );
+  const left = report.date === now.date ? "现在剩" : `${weekdayCN(report.cutoff)}晚剩`;
+  const supplied = need.supplied > 0 ? `，加已记补药 ${fmtQty(need.supplied)} 颗` : "";
+  const span = report.days % 7 === 0 ? `${report.days / 7} 周` : `${report.days} 天`;
+  return `不够了：${left} ${fmtQty(need.stockBefore)} 颗${supplied}，${span}需 ${fmtQty(need.demand)} 颗，缺 ${fmtQty(need.need)} 颗`;
 }
 
-/** What to get: "2 盒，共 48 颗（缺 28 颗，多出的 20 颗留到下次）". */
+/** What to get: "2 盒，共 48 颗（多 20 颗）"; pills only without a pack size. */
 export function prescriptionText(need: VisitNeed, m: Pick<MedicationRecord, "packUnit">): string {
   if (need.need === 0) return "无需开药";
-  if (need.packs === null) return `${fmtQty(need.need)} 颗（未写明每${m.packUnit}颗数，按颗开）`;
+  if (need.packs === null) return `${fmtQty(need.need)} 颗`;
   const extra = Math.round((need.prescribed - need.need) * 2) / 2;
   const total = `${need.packs} ${m.packUnit}，共 ${fmtQty(need.prescribed)} 颗`;
-  return extra > 0 ? `${total}（缺 ${fmtQty(need.need)} 颗，多出的 ${fmtQty(extra)} 颗留到下次）` : total;
+  return extra > 0 ? `${total}（多 ${fmtQty(extra)} 颗）` : total;
 }
 
 /** For the next visit only: the stock runs out before it. */
 export function gapWarning(item: VisitItem, report: VisitReport): string | null {
   const gap = report.index === 0 ? item.status.plan.beforeFirst : null;
   if (!gap) return null;
-  const latest = gap.latestVisit ? `最晚 ${fmtDate(gap.latestVisit)} 就诊才不会断药` : "需要提前加诊";
-  return `等不到这次就诊：${fmtDate(gap.from.date)} 起就会断药，到就诊前还缺 ${fmtQty(gap.shortfall)} 颗（${latest}）。这部分不含在上面的开药量里。`;
+  const latest = gap.latestVisit ? `最晚 ${fmtDate(gap.latestVisit)} 就诊` : "需提前加诊";
+  return `等不到这次就诊：${fmtDate(gap.from.date)} 起断药，就诊前缺 ${fmtQty(gap.shortfall)} 颗（${latest}），不在本次开药量里`;
 }
 
 /* ------------------------------------- stock list ------------------------------------- */

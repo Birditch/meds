@@ -11,6 +11,7 @@ import {
   reserveReport,
   prescriptionText,
   stockReport,
+  tagsText,
   visitReport,
   type ReportInput,
 } from "./reports";
@@ -62,11 +63,9 @@ describe("visit list", () => {
     const a = r.needed[0];
     expect(a.need).toMatchObject({ stockBefore: 6, demand: 56, need: 50, packs: 4, prescribed: 56 });
     expect(needText(a.need, a.medication)).toBe("4 盒（50 颗）");
-    expect(prescriptionText(a.need, a.medication)).toBe("4 盒，共 56 颗（缺 50 颗，多出的 6 颗留到下次）");
+    expect(prescriptionText(a.need, a.medication)).toBe("4 盒，共 56 颗（多 6 颗）");
     const reason = needReason(a, r, NOW);
-    expect(reason).toContain("2026.12.02 周三 晚上吃完后剩 6 颗");
-    expect(reason).toContain("从 2026.12.03 周四 吃到 2026.12.30 周三 晚上共 28 天（4 周），按规律需 56 颗");
-    expect(reason).toContain("缺 50 颗");
+    expect(reason).toBe("不够了：周三晚剩 6 颗，4 周需 56 颗，缺 50 颗");
     expect(gapWarning(a, r)).toBeNull();
   });
 
@@ -74,7 +73,7 @@ describe("visit list", () => {
     const b = visitReport(input(["2026-12-03"]))!.needed[1];
     expect(b.need).toMatchObject({ stockBefore: 0, need: 28, packs: null });
     expect(needText(b.need, b.medication)).toBe("28 颗");
-    expect(prescriptionText(b.need, b.medication)).toBe("28 颗（未写明每盒颗数，按颗开）");
+    expect(prescriptionText(b.need, b.medication)).toBe("28 颗");
     // It has already run out: the list says so, apart from the prescription.
     expect(gapWarning(b, visitReport(input(["2026-12-03"]))!)).toContain("等不到这次就诊");
   });
@@ -204,5 +203,12 @@ describe("manufacturers and tags", () => {
   it("counts the need in the other manufacturers' boxes too", () => {
     expect(otherPacksText({ need: 26 }, M)).toBe("或 江苏恩华 2 盒（40 颗）");
     expect(otherPacksText({ need: 0 }, M)).toBeNull();
+  });
+});
+
+describe("printed tags", () => {
+  it("keeps what limits getting the medication, 进口 and the user's own words", () => {
+    expect(tagsText({ tags: ["psy2", "doping", "rx", "ins-a", "essential", "imported", "generic", "dark", "饭后吃"] })).toBe("精二 · 进口 · 饭后吃");
+    expect(tagsText({ tags: ["rx", "ins-b", "essential"] })).toBe("");
   });
 });
