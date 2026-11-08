@@ -384,6 +384,7 @@ function MedicationCard({
   const shares = packShares(medication, status);
   const balanceNote = packNote(status.balanceNow, medication);
   const reserveNote = packNote(medication.reserve, medication);
+  const taking = isTaking(intake);
   // The status box already says 已停药 / 未设规律: the badge adds when.
   const intakeNote =
     intake.kind === "starting" ? intakeLabel(intake) : intake.kind === "stopped" ? `${fmtDate(intake.since)} 起停药` : null;
@@ -421,11 +422,14 @@ function MedicationCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3 text-sm">
-        <Row label="当前规律">{formatRegimen(status.current)}</Row>
-        <Row label="今日当前剩余">
-          <span className="text-xl font-semibold">{fmtQty(status.balanceNow)} 颗</span>
-          {multi ? <PackAmounts shares={shares} of="stock" /> : balanceNote && <span className="text-xs text-muted-foreground">{balanceNote}</span>}
-        </Row>
+        {/* Not being taken: the status box says 已停药 / 未设规律; leftover pills still show. */}
+        {taking && <Row label="当前规律">{formatRegimen(status.current)}</Row>}
+        {(taking || status.balanceNow > 0) && (
+          <Row label="今日当前剩余">
+            <span className="text-xl font-semibold">{fmtQty(status.balanceNow)} 颗</span>
+            {multi ? <PackAmounts shares={shares} of="stock" /> : balanceNote && <span className="text-xs text-muted-foreground">{balanceNote}</span>}
+          </Row>
+        )}
         <div className="grid gap-1.5 rounded-lg bg-muted/50 p-3">
           <div className="flex items-center justify-between gap-2">
             <span className="text-muted-foreground">能吃到</span>
@@ -441,7 +445,7 @@ function MedicationCard({
             <span className="text-xs text-muted-foreground">{describeReserve(medication.reserve, status.current)}</span>
           )}
         </Row>
-        {next && isTaking(intake) && (
+        {next && taking && (
           <Row label={`下次就诊 ${fmtDate(next.date)}`}>
             {next.need === 0 ? (
               <span className="text-muted-foreground">无需开药</span>
