@@ -66,8 +66,17 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   A regimen never applies before its date; setting one again for the same date overwrites it.
 - **Reserve (药物储备)** (管理储备 on each card): extra pills kept at home, outside the stock and the projection, per
   manufacturer. The app only says how many whole days they would last on today's regimen.
-  "加入储备" adds pills on top of what is there, "从储备取用" moves pills from the reserve into the
-  stock as one supply log of that manufacturer, "盘点储备" replaces the number with a count.
+  "补进储备" records a dated refill of the reserve, "取用到当前" moves pills from the reserve into the
+  stock as one supply log of that manufacturer, "盘点储备" replaces the number with a count, and
+  "当前转入储备" moves pills back from the stock (recorded as a stock count of what stays).
+  Every change is listed under 储备记录 in the detail view and can be undone there.
+- **Where a refill goes**: a medication not being taken has no current stock to add to, so its
+  补药 goes to the reserve (the server refuses a stock supply for it), and so does the initial
+  amount of a new medication created without a regimen. One being taken offers 新开的药,
+  从储备拉取 and 补进储备. When a regimen puts a medication on the 在吃 list, the form asks how
+  many pills or packs of each manufacturer's reserve to bring into the stock; left empty, the
+  reserve stays as it is. A supply that came from the reserve is marked 来自储备, cannot be edited,
+  and goes back to the reserve when deleted.
 - **Visit plan (就诊计划)**: enter the next visits (下次, 下下次, …). For each one and each
   medication it works out how many pills — and how many whole boxes / bottles — to get so the
   stock lasts to the following visit without touching the reserve. Extra pills from rounding up

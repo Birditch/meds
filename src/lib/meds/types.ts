@@ -11,6 +11,22 @@ export interface SupplyRecord {
   packId: number | null;
   /** When it was entered (ms since epoch): a supply entered after a same-day count comes on top of it. */
   recordedAt: number;
+  /** Taken out of the reserve: deleting it puts the pills back there. */
+  fromReserve: boolean;
+}
+
+export const RESERVE_LOG_KINDS = ["restock", "draw", "count", "transfer"] as const;
+export type ReserveLogKind = (typeof RESERVE_LOG_KINDS)[number];
+
+/** One change to a pack's reserve. */
+export interface ReserveLogRecord {
+  id: number;
+  date: ISODate;
+  kind: ReserveLogKind;
+  /** What it did to the reserve, in pills (negative for a draw). */
+  delta: number;
+  packId: number;
+  recordedAt: number;
 }
 
 /** A stock count: the pills actually at home after `slotsDone` (0–3) of that day's doses. */
@@ -67,6 +83,8 @@ export interface MedicationRecord {
   tags: string[];
   supplies: SupplyRecord[];
   counts: CountRecord[];
+  /** Every recorded change to the reserve, oldest first. */
+  reserveLogs: ReserveLogRecord[];
   regimens: RegimenRecord[];
   /** Pinyin of name and every brand (full and initials) and the tags' names, for fuzzy search. */
   searchKeys: string[];

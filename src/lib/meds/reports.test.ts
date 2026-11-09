@@ -33,8 +33,9 @@ const med = (
   packs: [{ id: 1, brand: null, packUnit: "盒", perBox, reserve }],
   reserve,
   tags: [],
-  supplies: supplies.map(([date, quantity]) => ({ id: nextId++, date, quantity, packId: null, recordedAt: 0 })),
+  supplies: supplies.map(([date, quantity]) => ({ id: nextId++, date, quantity, packId: null, recordedAt: 0, fromReserve: false })),
   counts: [],
+  reserveLogs: [],
   regimens: [{ id: nextId++, effectiveFrom: "2026-11-01", morning: daily === 2 ? 1 : 0, noon: 0, evening: 1 }],
   searchKeys: [],
 });
@@ -92,11 +93,13 @@ describe("visit list", () => {
   it("lists every supply as a purchase", () => {
     expect(purchaseLines(A, NOW.date)).toEqual(["2026.11.01 周日 购买 70 颗（5 盒）"]);
     // Less than a box: no pack count.
-    expect(purchaseLines({ ...A, supplies: [{ id: 98, date: "2026-11-02", quantity: 10, packId: null, recordedAt: 0 }] }, NOW.date)).toEqual([
+    expect(purchaseLines({ ...A, supplies: [{ id: 98, date: "2026-11-02", quantity: 10, packId: null, recordedAt: 0, fromReserve: false }] }, NOW.date)).toEqual([
       "2026.11.02 周一 购买 10 颗",
     ]);
-    const planned = { ...C, supplies: [...C.supplies, { id: 99, date: "2026-11-20", quantity: 30, packId: null, recordedAt: 0 }] };
+    const planned = { ...C, supplies: [...C.supplies, { id: 99, date: "2026-11-20", quantity: 30, packId: null, recordedAt: 0, fromReserve: false }] };
     expect(purchaseLines(planned, NOW.date)).toEqual(["2026.11.01 周日 购买 200 颗", "2026.11.20 周五 计划购买 30 颗"]);
+    const drawn = { ...A, supplies: [{ id: 97, date: "2026-11-02", quantity: 10, packId: null, recordedAt: 0, fromReserve: true }] };
+    expect(purchaseLines(drawn, NOW.date)).toEqual(["2026.11.02 周一 从储备取用 10 颗"]);
   });
 });
 
@@ -173,7 +176,7 @@ describe("manufacturers and tags", () => {
       { id: 8, brand: "江苏恩华", packUnit: "盒", perBox: 20, reserve: 0 },
     ],
     tags: ["psy2", "rx"],
-    supplies: [{ id: 1, date: "2026-11-02", quantity: 40, packId: 8, recordedAt: 0 }],
+    supplies: [{ id: 1, date: "2026-11-02", quantity: 40, packId: 8, recordedAt: 0, fromReserve: false }],
   };
 
   it("names every manufacturer and the one each purchase came from", () => {

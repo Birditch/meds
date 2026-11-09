@@ -8,7 +8,7 @@ import { resolveAmount, type AmountState } from "@/lib/meds/amount";
 import { cn } from "@/lib/utils";
 import { QuantityInput } from "./quantity-input";
 
-export { amountInPacks, amountState, resolveAmount, type AmountState } from "@/lib/meds/amount";
+export { amountInPacks, amountIsEmpty, amountState, resolveAmount, type AmountState } from "@/lib/meds/amount";
 
 const digits = (v: string) => v.replace(/[^\d.]/g, "");
 

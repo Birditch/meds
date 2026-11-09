@@ -91,7 +91,11 @@ export const staySchema = z
   .object({ startDate: dateSchema, endDate: dateSchema })
   .refine((s) => s.endDate >= s.startDate, "出院日期不能早于入院日期");
 
-export const drawSchema = z.object({ date: dateSchema, quantity: quantitySchema });
+/** Pills going into or out of a reserve on a day. */
+export const reserveEntrySchema = z.object({ date: dateSchema, quantity: quantitySchema });
+
+/** How many pills to take out of each pack's reserve when a medication starts being taken. */
+export const reserveDrawsSchema = z.array(z.object({ packId: z.number().int().positive(), quantity: quantitySchema })).max(50, "厂家太多");
 
 export const idSchema = z.number().int().positive();
 
@@ -145,6 +149,7 @@ export type PackFields = z.input<typeof packSchema>;
 export type SupplyFields = z.input<typeof supplySchema>;
 export type RegimenFields = z.infer<typeof regimenSchema>;
 export type StayFields = z.infer<typeof staySchema>;
-export type DrawFields = z.infer<typeof drawSchema>;
+export type ReserveEntryFields = z.infer<typeof reserveEntrySchema>;
+export type ReserveDrawFields = z.infer<typeof reserveDrawsSchema>;
 export type CreateMedicationFields = z.input<typeof createMedicationSchema>;
 export type ImportFields = z.input<typeof importSchema>;

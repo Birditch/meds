@@ -21,7 +21,7 @@ import {
 import type { DateRange, Moment } from "@/lib/meds/simulate";
 import type { MedicationRecord } from "@/lib/meds/types";
 import { visitOrdinal } from "@/lib/meds/visits";
-import { ConfirmDelete, RegimenTimeline, SupplyHistory } from "./history";
+import { ConfirmDelete, RegimenTimeline, ReserveHistory, SupplyHistory } from "./history";
 import { EditMedicationForm, ReservePanel } from "./medication-dialogs";
 import { PackAmounts, PacksPanel } from "./packs";
 import { StatusBadge, toneText } from "./status-badge";
@@ -192,7 +192,7 @@ export function DetailDialog({
 
             {panel === "reserve" && (
               <div className="rounded-lg border bg-muted/30 p-3">
-                <ReservePanel key={medication.id} medication={medication} today={now.date} onDone={() => setPanel(null)} />
+                <ReservePanel key={medication.id} medication={medication} status={status} today={now.date} onDone={() => setPanel(null)} />
               </div>
             )}
 
@@ -257,7 +257,10 @@ export function DetailDialog({
             <Separator />
 
             <div className="grid gap-6 md:grid-cols-2">
-              <SupplyHistory medication={medication} today={now.date} pauses={stays} visits={visits} />
+              <div className="grid content-start gap-6">
+                <SupplyHistory medication={medication} today={now.date} pauses={stays} visits={visits} />
+                <ReserveHistory medication={medication} today={now.date} />
+              </div>
               <RegimenTimeline medication={medication} today={now.date} />
             </div>
           </>

@@ -102,7 +102,8 @@ export function purchaseLines(m: MedicationRecord, today: ISODate): string[] {
         p.perBox && s.quantity >= p.perBox ? fmtPacks(s.quantity, p.perBox, p.packUnit) : null,
         m.packs.length > 1 ? (packOf(m, s.packId)?.brand ?? null) : null,
       ].filter(Boolean);
-      return `${fmtDate(s.date)} ${s.date > today ? "计划购买" : "购买"} ${fmtQty(s.quantity)} 颗${parts.length ? `（${parts.join(" · ")}）` : ""}`;
+      const verb = s.fromReserve ? "从储备取用" : s.date > today ? "计划购买" : "购买";
+      return `${fmtDate(s.date)} ${verb} ${fmtQty(s.quantity)} 颗${parts.length ? `（${parts.join(" · ")}）` : ""}`;
     });
 }
 

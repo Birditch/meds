@@ -43,6 +43,13 @@
       "when": 1794021529258,
       "tag": "0005_pack_stock_reserve",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794245140135,
+      "tag": "0006_reserve_logs",
+      "breakpoints": true
     }
   ]
 }

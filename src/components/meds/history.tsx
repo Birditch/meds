@@ -3,7 +3,7 @@
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { addSupply, deleteCount, deleteRegimen, deleteSupply, saveRegimen, updateRegimen, updateSupply } from "@/app/actions";
+import { addSupply, deleteCount, deleteRegimen, deleteReserveLog, deleteSupply, saveRegimen, updateRegimen, updateSupply } from "@/app/actions";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,10 +18,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { addDays, fmtDate, type ISODate } from "@/lib/meds/dates";
-import { COUNT_MOMENT_LABEL, fmtQty, formatRegimen, packNote } from "@/lib/meds/format";
+import { COUNT_MOMENT_LABEL, fmtQty, formatRegimen, intakeAt, isTaking, packNote } from "@/lib/meds/format";
 import { regimenAt, type DateRange } from "@/lib/meds/simulate";
-import type { ActionResult, CountRecord, MedicationRecord, SupplyRecord } from "@/lib/meds/types";
+import type { ActionResult, CountRecord, MedicationRecord, ReserveLogKind, ReserveLogRecord, SupplyRecord } from "@/lib/meds/types";
 import { RegimenForm, SupplyForm } from "./forms";
+import { ReserveForms } from "./medication-dialogs";
 
 export function ConfirmDelete({
   title,
@@ -70,17 +71,19 @@ export function ConfirmDelete({
   );
 }
 
-function SectionHeader({ title, hint, onAdd, adding }: { title: string; hint: string; onAdd: () => void; adding: boolean }) {
+function SectionHeader({ title, hint, onAdd, adding }: { title: string; hint: string; onAdd?: () => void; adding: boolean }) {
   return (
     <div className="flex items-center justify-between gap-2">
       <div>
         <h3 className="text-sm font-medium">{title}</h3>
         <p className="text-xs text-muted-foreground">{hint}</p>
       </div>
-      <Button size="sm" variant={adding ? "secondary" : "outline"} onClick={onAdd}>
-        <PlusIcon />
-        新增
-      </Button>
+      {onAdd && (
+        <Button size="sm" variant={adding ? "secondary" : "outline"} onClick={onAdd}>
+          <PlusIcon />
+          新增
+        </Button>
+      )}
     </div>
   );
 }
@@ -110,17 +113,23 @@ export function SupplyHistory({
   ].sort((a, b) => (a.r.date === b.r.date ? b.r.recordedAt - a.r.recordedAt || b.r.id - a.r.id : a.r.date < b.r.date ? 1 : -1));
   const total = medication.supplies.reduce((sum, r) => sum + r.quantity, 0);
   const counts = medication.counts.length;
+  // Not being taken: new pills go to the reserve (its own list below).
+  const taking = isTaking(intakeAt(medication.regimens, today));
 
   return (
     <section className="grid content-start gap-3">
       <SectionHeader
         title={counts ? "补药与盘点记录" : "开药 / 补药记录"}
-        hint={`补药 ${medication.supplies.length} 次，累计 ${fmtQty(total)} 颗${counts ? ` · 盘点 ${counts} 次` : ""}`}
+        hint={`补药 ${medication.supplies.length} 次，累计 ${fmtQty(total)} 颗${counts ? ` · 盘点 ${counts} 次` : ""}${taking ? "" : " · 没在吃的药，新补的进储备"}`}
         adding={adding}
-        onAdd={() => {
-          setAdding((v) => !v);
-          setEditing(null);
-        }}
+        onAdd={
+          taking
+            ? () => {
+                setAdding((v) => !v);
+                setEditing(null);
+              }
+            : undefined
+        }
       />
       {adding && (
         <div className="rounded-lg border bg-muted/30 p-3">
@@ -155,26 +164,31 @@ export function SupplyHistory({
             <li key={r.id} className="flex items-center gap-3 px-3 py-2">
               <span className="tabular-nums">{fmtDate(r.date)}</span>
               {r.date > today && <Badge variant="outline">计划</Badge>}
+              {r.fromReserve && <Badge variant="secondary">来自储备</Badge>}
               {medication.packs.length > 1 && r.packId !== null && (
                 <span className="truncate text-xs text-muted-foreground">{medication.packs.find((p) => p.id === r.packId)?.brand ?? "未写厂家"}</span>
               )}
               <span className="ml-auto font-medium tabular-nums">+{fmtQty(r.quantity)} 颗</span>
               <div className="flex">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="编辑"
-                  className="text-muted-foreground"
-                  onClick={() => {
-                    setEditing(r.id);
-                    setAdding(false);
-                  }}
-                >
-                  <PencilIcon />
-                </Button>
+                {r.fromReserve ? (
+                  <span className="size-8" aria-hidden />
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="编辑"
+                    className="text-muted-foreground"
+                    onClick={() => {
+                      setEditing(r.id);
+                      setAdding(false);
+                    }}
+                  >
+                    <PencilIcon />
+                  </Button>
+                )}
                 <ConfirmDelete
                   title="删除这条补药记录？"
-                  description={`${fmtDate(r.date)} +${fmtQty(r.quantity)} 颗。删除后余量曲线和耗尽时间会重新计算。`}
+                  description={`${fmtDate(r.date)} +${fmtQty(r.quantity)} 颗。删除后余量曲线和耗尽时间会重新计算${r.fromReserve ? "，这些药退回储备" : ""}。`}
                   onConfirm={() => deleteSupply(r.id)}
                 />
               </div>
@@ -214,6 +228,72 @@ function CountRow({ count, medication }: { count: CountRecord; medication: Medic
   );
 }
 
+/* --------------------------------- reserve history -------------------------------- */
+
+const RESERVE_LOG_LABEL: Record<ReserveLogKind, string> = {
+  restock: "补进储备",
+  draw: "取用到当前",
+  count: "盘点",
+  transfer: "从当前转入",
+};
+
+/** What undoing an entry will do. */
+function undoEffect({ kind, delta }: ReserveLogRecord): string {
+  const pills = fmtQty(Math.abs(delta));
+  switch (kind) {
+    case "restock":
+      return `储备减少 ${pills} 颗。`;
+    case "draw":
+      return `${pills} 颗退回储备，对应的那笔补药记录一起删除，余量重新计算。`;
+    case "count":
+      return `储备${delta > 0 ? "减少" : "增加"} ${pills} 颗，回到这次盘点之前的数。`;
+    case "transfer":
+      return `${pills} 颗从储备退回当前余量。`;
+  }
+}
+
+/** Every recorded change to the reserve, newest first, each one undoable. */
+export function ReserveHistory({ medication, today }: { medication: MedicationRecord; today: ISODate }) {
+  const [adding, setAdding] = useState(false);
+  const rows = [...medication.reserveLogs].sort((a, b) => (a.date === b.date ? b.recordedAt - a.recordedAt || b.id - a.id : a.date < b.date ? 1 : -1));
+  return (
+    <section className="grid content-start gap-3">
+      <SectionHeader title="储备记录" hint={`现有储备 ${fmtQty(medication.reserve)} 颗`} adding={adding} onAdd={() => setAdding((v) => !v)} />
+      {adding && (
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <ReserveForms medication={medication} tab="restock" today={today} onDone={() => setAdding(false)} />
+        </div>
+      )}
+      {rows.length === 0 && !adding && (
+        <p className="py-6 text-center text-sm text-muted-foreground">还没有储备记录{medication.reserve > 0 ? "（现有的储备是早先录入的，没有明细）" : ""}</p>
+      )}
+      {rows.length > 0 && (
+        <ul className="divide-y rounded-lg border">
+          {rows.map((r) => {
+            const change = `${r.delta > 0 ? "+" : "−"}${fmtQty(Math.abs(r.delta))} 颗`;
+            return (
+              <li key={r.id} className="flex items-center gap-3 px-3 py-2">
+                <span className="tabular-nums">{fmtDate(r.date)}</span>
+                <Badge variant="secondary">{RESERVE_LOG_LABEL[r.kind]}</Badge>
+                {medication.packs.length > 1 && (
+                  <span className="truncate text-xs text-muted-foreground">{medication.packs.find((p) => p.id === r.packId)?.brand ?? "未写厂家"}</span>
+                )}
+                <span className="ml-auto font-medium tabular-nums">{change}</span>
+                <ConfirmDelete
+                  title={`撤销这条“${RESERVE_LOG_LABEL[r.kind]}”？`}
+                  description={`${fmtDate(r.date)} ${change}。${undoEffect(r)}`}
+                  label="撤销"
+                  onConfirm={() => deleteReserveLog(r.id)}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 /* -------------------------------- regimen timeline ------------------------------- */
 
 export function RegimenTimeline({ medication, today }: { medication: MedicationRecord; today: ISODate }) {
@@ -242,8 +322,9 @@ export function RegimenTimeline({ medication, today }: { medication: MedicationR
             today={today}
             initial={current ? { morning: current.morning, noon: current.noon, evening: current.evening } : undefined}
             existing={medication.regimens}
+            reservePacks={medication.packs}
             submitLabel="添加"
-            onSubmit={(f) => saveRegimen(medication.id, f)}
+            onSubmit={(f, draws) => saveRegimen(medication.id, f, draws)}
             onDone={() => setAdding(false)}
             onCancel={() => setAdding(false)}
           />
@@ -264,7 +345,8 @@ export function RegimenTimeline({ medication, today }: { medication: MedicationR
                   initial={r}
                   existing={medication.regimens}
                   editingId={r.id}
-                  onSubmit={(f) => updateRegimen(r.id, f)}
+                  reservePacks={medication.packs}
+                  onSubmit={(f, draws) => updateRegimen(r.id, f, draws)}
                   onDone={() => setEditing(null)}
                   onCancel={() => setEditing(null)}
                 />

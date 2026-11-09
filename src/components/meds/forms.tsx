@@ -4,16 +4,16 @@ import { Loader2Icon } from "lucide-react";
 import { useId, useMemo, useState, useTransition, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { formatRegimenShort, fmtQty, packNote } from "@/lib/meds/format";
+import { fmtPacks, formatRegimenShort, fmtQty, packNote, startsTaking } from "@/lib/meds/format";
 import { addDays, fmtDate, fmtDay, weekdayCN, type ISODate } from "@/lib/meds/dates";
 import { balanceAt, regimenAt, simulate, supplyToLast, type DateRange } from "@/lib/meds/simulate";
 import { clinicDayOnOrBefore, usualNextVisit } from "@/lib/meds/visits";
 import type { ActionResult, MedicationRecord, PackRecord, RegimenRecord } from "@/lib/meds/types";
 import { cn } from "@/lib/utils";
-import { regimenSchema, supplySchema, type RegimenFields, type SupplyFields } from "@/lib/meds/validation";
+import { regimenSchema, supplySchema, type RegimenFields, type ReserveDrawFields, type SupplyFields } from "@/lib/meds/validation";
 import { DatePicker } from "./date-picker";
 import { QuantityInput, parseQuantity } from "./quantity-input";
-import { SupplyAmountInput, amountState, resolveAmount } from "./supply-amount";
+import { SupplyAmountInput, amountIsEmpty, amountState, resolveAmount, type AmountState } from "./supply-amount";
 
 /** "江苏恩华 · 20 颗/盒". */
 export const packLabel = (p: Pick<PackRecord, "brand" | "perBox" | "packUnit">) =>
@@ -303,11 +303,49 @@ export function parseDoses(values: { morning: string; noon: string; evening: str
 
 const doseText = (n: number | undefined) => (n === undefined ? "0" : fmtQty(n));
 
+/** Starting to take a medication: how many pills of each manufacturer's reserve to bring into the current stock. */
+function ReserveDrawInputs({
+  packs,
+  values,
+  onChange,
+  date,
+}: {
+  /** The packs that have a reserve. */
+  packs: readonly PackRecord[];
+  values: Record<number, AmountState>;
+  onChange: (values: Record<number, AmountState>) => void;
+  /** The day the pills enter the stock: the regimen's first. */
+  date: ISODate;
+}) {
+  const uid = useId();
+  return (
+    <div className="grid gap-3 rounded-lg border border-sky-300 bg-sky-50/60 p-3 dark:border-sky-800 dark:bg-sky-950/40">
+      <div className="grid gap-1">
+        <p className="text-sm font-medium">
+          这种药要开始吃了，从储备拿一些计入当前药量？ <span className="font-normal text-muted-foreground">（选填，不填就不动储备）</span>
+        </p>
+        <p className="text-xs text-muted-foreground">拿出的药记为 {fmtDate(date)} 的一笔补药、计入当前余量，储备同时减少。</p>
+      </div>
+      {packs.map((p) => (
+        <SupplyAmountInput
+          key={p.id}
+          id={`${uid}-${p.id}`}
+          label={`${p.brand ?? "未写厂家"}（储备 ${fmtPacks(p.reserve, p.perBox, p.packUnit)}）`}
+          value={values[p.id] ?? amountState("", p.perBox)}
+          onChange={(a) => onChange({ ...values, [p.id]: a })}
+          unit={p.packUnit}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function RegimenForm({
   today,
   initial,
   existing,
   editingId,
+  reservePacks,
   submitLabel = "保存",
   onSubmit,
   onDone,
@@ -318,9 +356,11 @@ export function RegimenForm({
   /** All regimens of this medication, to warn about overwriting a day. */
   existing: RegimenRecord[];
   editingId?: number;
+  /** The medication's packs: when this regimen starts it being taken, part of their reserve can come along. */
+  reservePacks?: readonly PackRecord[];
   submitLabel?: string;
-  onSubmit: (fields: RegimenFields) => Promise<ActionResult>;
-  onDone?: () => void;
+  onSubmit: (fields: RegimenFields, draws: ReserveDrawFields) => Promise<ActionResult>;
+  onDone?: (draws: ReserveDrawFields) => void;
   onCancel?: () => void;
 }) {
   const [effectiveFrom, setEffectiveFrom] = useState(initial?.effectiveFrom ?? today);
@@ -332,6 +372,15 @@ export function RegimenForm({
   const { pending, error, setError, submit } = useActionForm();
   const clash = existing.find((r) => r.effectiveFrom === effectiveFrom && r.id !== editingId);
   const idPrefix = useId();
+  const [drawAmounts, setDrawAmounts] = useState<Record<number, AmountState>>({});
+  const { morning, noon, evening } = parseDoses(doses);
+  const withReserve = reservePacks?.filter((p) => p.id > 0 && p.reserve > 0) ?? [];
+  const starting =
+    withReserve.length > 0 &&
+    morning !== null &&
+    noon !== null &&
+    evening !== null &&
+    startsTaking(existing, { effectiveFrom, morning, noon, evening }, today, editingId);
 
   return (
     <form
@@ -340,7 +389,21 @@ export function RegimenForm({
         e.preventDefault();
         const parsed = regimenSchema.safeParse({ effectiveFrom, ...parseDoses(doses) });
         if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "输入无效");
-        submit(() => onSubmit(parsed.data), onDone);
+        const draws: ReserveDrawFields = [];
+        for (const p of starting ? withReserve : []) {
+          const brand = p.brand ?? "这个厂家";
+          const typed = drawAmounts[p.id];
+          if (!typed || amountIsEmpty(typed)) continue;
+          const amount = resolveAmount(typed, p.packUnit);
+          if ("error" in amount) return setError(`${brand}：${amount.error}`);
+          if (!amount.value) continue;
+          if (amount.value > p.reserve) return setError(`${brand}的储备只有 ${fmtQty(p.reserve)} 颗`);
+          draws.push({ packId: p.id, quantity: amount.value });
+        }
+        submit(
+          () => onSubmit(parsed.data, draws),
+          () => onDone?.(draws),
+        );
       }}
     >
       <div className="grid gap-2">
@@ -348,6 +411,7 @@ export function RegimenForm({
         <DatePicker id={`${idPrefix}-date`} label="生效日期" value={effectiveFrom} onChange={setEffectiveFrom} today={today} />
       </div>
       <DoseFields idPrefix={idPrefix} values={doses} onChange={setDoses} />
+      {starting && <ReserveDrawInputs packs={withReserve} values={drawAmounts} onChange={setDrawAmounts} date={effectiveFrom} />}
       <p className="text-xs text-muted-foreground">
         从 {fmtDate(effectiveFrom)} 当天起按新规律扣减，此前的日期仍按当时生效的规律计算。
         {clash && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { intakeAt, intakeLabel, isTaking } from "./format";
+import { intakeAt, intakeLabel, isTaking, startsTaking } from "./format";
 
 const reg = (effectiveFrom: string, morning: number, noon: number, evening: number) => ({ effectiveFrom, morning, noon, evening });
 const TODAY = "2026-11-07";
@@ -31,5 +31,31 @@ describe("intake: 在吃 / 未在吃", () => {
     expect(intakeAt([], TODAY)).toEqual({ kind: "unset" });
     expect(intakeAt([reg("2026-12-01", 0, 0, 0)], TODAY)).toEqual({ kind: "unset" });
     expect(isTaking({ kind: "unset" })).toBe(false);
+  });
+});
+
+describe("startsTaking: the moment to offer pills from the reserve", () => {
+  const stored = (id: number, ...r: Parameters<typeof reg>) => ({ id, ...reg(...r) });
+  const stop = stored(2, "2026-11-01", 0, 0, 0);
+
+  it("is true when a medication not being taken gets doses", () => {
+    expect(startsTaking([], reg("2026-11-07", 1, 0, 1), TODAY)).toBe(true);
+    expect(startsTaking([stored(1, "2026-10-01", 1, 0, 0), stop], reg("2026-11-07", 0, 0, 1), TODAY)).toBe(true);
+    // Starting later still puts it on the list.
+    expect(startsTaking([], reg("2026-11-20", 1, 0, 0), TODAY)).toBe(true);
+  });
+
+  it("is false while it stays off the list", () => {
+    expect(startsTaking([], reg("2026-11-07", 0, 0, 0), TODAY)).toBe(false);
+    expect(startsTaking([stop], reg("2026-11-07", 0, 0, 0), TODAY)).toBe(false);
+  });
+
+  it("is false for a medication already being taken", () => {
+    expect(startsTaking([stored(1, "2026-10-01", 1, 0, 0)], reg("2026-11-07", 2, 0, 0), TODAY)).toBe(false);
+  });
+
+  it("reads an edit or a same-day overwrite as replacing that regimen", () => {
+    expect(startsTaking([stop], reg("2026-11-01", 1, 0, 0), TODAY, stop.id)).toBe(true);
+    expect(startsTaking([stop], reg("2026-11-01", 1, 0, 0), TODAY)).toBe(true);
   });
 });

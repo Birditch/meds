@@ -31,7 +31,7 @@ import { daysFromToday } from "@/lib/meds/visits";
 import { BulkImportDialog } from "./bulk-import";
 import { DetailDialog } from "./detail-dialog";
 import { useHasImportDraft } from "./import-draft";
-import { AddSupplyDialog, CreateMedicationDialog, RegimenDialog, ReserveDialog } from "./medication-dialogs";
+import { AddSupplyDialog, CreateMedicationDialog, RegimenDialog, ReserveDialog, type ReserveTab } from "./medication-dialogs";
 import { PageTitle } from "./page-title";
 import { packLabel } from "./forms";
 import { PackAmounts } from "./packs";
@@ -40,7 +40,7 @@ import { StrengthTabs } from "./strength-tabs";
 import { TONE_CLASS, TagBadges } from "./tags";
 import { useMeds, type MedsData } from "./use-meds";
 
-type Panel = { kind: "supply" | "regimen" | "reserve" | "detail"; id: number } | null;
+type Panel = { kind: "supply" | "regimen" | "reserve" | "detail"; id: number; reserveTab?: ReserveTab } | null;
 
 /** 在吃 / 未在吃, kept in the URL (`?tab=inactive`) so it survives a reload and can be linked. */
 type Tab = "active" | "inactive";
@@ -196,7 +196,7 @@ export function Board(data: MedsData) {
           <p className="text-xs text-muted-foreground">
             {tab === "active"
               ? "当前按规律在吃的药（含之后才开始吃的）。"
-              : "已停药或没设服用规律的药：不消耗、不需要开药。改规律后会自动回到“在吃”。"}
+              : "已停药或没设服用规律的药：不消耗、不需要开药，补的药进储备。改规律后会自动回到“在吃”，那时可以选拿多少储备到当前。"}
           </p>
         </div>
       )}
@@ -310,6 +310,7 @@ export function Board(data: MedsData) {
                 onSupply={() => setPanel({ kind: "supply", id: m.id })}
                 onRegimen={() => setPanel({ kind: "regimen", id: m.id })}
                 onReserve={() => setPanel({ kind: "reserve", id: m.id })}
+                onTransfer={() => setPanel({ kind: "reserve", id: m.id, reserveTab: "transfer" })}
                 onDetail={() => setPanel({ kind: "detail", id: m.id })}
               />
             );
@@ -327,7 +328,14 @@ export function Board(data: MedsData) {
       <BulkImportDialog open={importing} onOpenChange={setImporting} medications={medications} statuses={statuses} now={now} />
       <AddSupplyDialog medication={open("supply")} onOpenChange={close} today={clock.date} pauses={pauses} visits={upcoming} {...strengths} />
       <RegimenDialog medication={open("regimen")} onOpenChange={close} today={clock.date} {...strengths} />
-      <ReserveDialog medication={open("reserve")} onOpenChange={close} today={clock.date} {...strengths} />
+      <ReserveDialog
+        medication={open("reserve")}
+        status={current ? (statuses.get(current.id) ?? null) : null}
+        initialTab={panel?.reserveTab}
+        onOpenChange={close}
+        today={clock.date}
+        {...strengths}
+      />
       <DetailDialog
         {...strengths}
         medication={detail}
@@ -363,6 +371,7 @@ function MedicationCard({
   onSupply,
   onRegimen,
   onReserve,
+  onTransfer,
   onDetail,
 }: {
   medication: MedicationRecord;
@@ -375,6 +384,7 @@ function MedicationCard({
   onSupply: () => void;
   onRegimen: () => void;
   onReserve: () => void;
+  onTransfer: () => void;
   onDetail: () => void;
 }) {
   const { conclusion, shortfall } = status;
@@ -428,6 +438,11 @@ function MedicationCard({
           <Row label="今日当前剩余">
             <span className="text-xl font-semibold">{fmtQty(status.balanceNow)} 颗</span>
             {multi ? <PackAmounts shares={shares} of="stock" /> : balanceNote && <span className="text-xs text-muted-foreground">{balanceNote}</span>}
+            {!taking && (
+              <button type="button" className="text-xs text-primary underline-offset-4 hover:underline" onClick={onTransfer}>
+                转入储备
+              </button>
+            )}
           </Row>
         )}
         <div className="grid gap-1.5 rounded-lg bg-muted/50 p-3">
@@ -474,9 +489,9 @@ function MedicationCard({
       <CardFooter className="mt-auto grid grid-cols-2 gap-2">
         <Button size="sm" variant="outline" onClick={onSupply}>
           <PlusIcon />
-          补药
+          {taking ? "补药" : "补进储备"}
         </Button>
-        <Button size="sm" variant="outline" onClick={onReserve} title="加入储备、从储备取用或修正储备数">
+        <Button size="sm" variant="outline" onClick={onReserve} title="补进储备、取用到当前、盘点或把当前余量转入储备">
           <ArchiveIcon />
           管理储备
         </Button>

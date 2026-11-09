@@ -59,6 +59,16 @@ export function intakeAt(regimens: readonly RegimenInput[], date: ISODate): Inta
 
 export const isTaking = (i: Intake) => i.kind === "taking" || i.kind === "starting";
 
+/**
+ * Whether saving `next` puts a medication that is not being taken on the 在吃 list. It replaces
+ * the regimen being edited and any other on its day.
+ */
+export function startsTaking<R extends RegimenInput & { id: number }>(regimens: readonly R[], next: RegimenInput, date: ISODate, editingId?: number): boolean {
+  if (isTaking(intakeAt(regimens, date))) return false;
+  const after = [...regimens.filter((r) => r.id !== editingId && r.effectiveFrom !== next.effectiveFrom), next];
+  return isTaking(intakeAt(after, date));
+}
+
 /** "2026.11.20 周五 起服用", "已停药", "未设服用规律"; null while taken. */
 export function intakeLabel(i: Intake): string | null {
   switch (i.kind) {

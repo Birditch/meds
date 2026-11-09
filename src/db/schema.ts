@@ -112,6 +112,37 @@ export const stockCounts = pgTable(
   ],
 );
 
+/**
+ * Every change to a pack's reserve since this table exists: the number itself stays on the pack.
+ * `delta` is what the entry did to the reserve, so undoing one takes it back. A draw is linked
+ * to the supply it became, a transfer to the stock count that took the pills out of the stock.
+ */
+export const reserveLogs = pgTable(
+  "reserve_logs",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    medicationId: integer()
+      .notNull()
+      .references(() => medications.id, { onDelete: "cascade" }),
+    packId: integer()
+      .notNull()
+      .references(() => medicationPacks.id, { onDelete: "cascade" }),
+    date: date({ mode: "string" }).notNull(),
+    /** restock: bought into the reserve; draw: taken into the stock; count: corrected; transfer: moved from the stock. */
+    kind: text({ enum: ["restock", "draw", "count", "transfer"] }).notNull(),
+    delta: numeric({ precision: 10, scale: 1, mode: "number" }).notNull(),
+    supplyLogId: integer().references(() => supplyLogs.id, { onDelete: "set null" }),
+    stockCountId: integer().references(() => stockCounts.id, { onDelete: "set null" }),
+    createdAt: timestamp({ withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("reserve_logs_medication_date_idx").on(t.medicationId, t.date),
+    check("reserve_logs_kind", sql`${t.kind} in ('restock', 'draw', 'count', 'transfer')`),
+    check("reserve_logs_delta_non_zero", sql`${t.delta} <> 0`),
+    check("reserve_logs_delta_half_step", halfStep("delta")),
+  ],
+);
+
 export const dosageRegimens = pgTable(
   "dosage_regimens",
   {

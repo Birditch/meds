@@ -5,30 +5,33 @@ import { refresh } from "next/cache";
 import { headers } from "next/headers";
 import type { z } from "zod";
 import { getDb } from "@/db";
-import { dosageRegimens, hospitalStays, medicationPacks, medications, stockCounts, supplyLogs, visits } from "@/db/schema";
+import { dosageRegimens, hospitalStays, medicationPacks, medications, reserveLogs, stockCounts, supplyLogs, visits } from "@/db/schema";
 import { checkAccess } from "@/lib/access";
 import { fmtDate, wallClock } from "@/lib/meds/dates";
-import { momentAt } from "@/lib/meds/simulate";
+import { intakeAt, isTaking } from "@/lib/meds/format";
+import { dailyTotal, momentAt, packBalancesAt, simulate, type Moment } from "@/lib/meds/simulate";
 import type { ActionResult } from "@/lib/meds/types";
 import {
   createMedicationSchema,
   dateSchema,
-  drawSchema,
   idSchema,
   importSchema,
   medicationInfoSchema,
   packSchema,
   quantitySchema,
   regimenSchema,
+  reserveDrawsSchema,
+  reserveEntrySchema,
   reserveSchema,
   staySchema,
   supplySchema,
   type CreateMedicationFields,
-  type DrawFields,
   type ImportFields,
   type MedicationInfoFields,
   type PackFields,
   type RegimenFields,
+  type ReserveDrawFields,
+  type ReserveEntryFields,
   type StayFields,
   type SupplyFields,
 } from "@/lib/meds/validation";
@@ -92,6 +95,87 @@ async function lockPack(tx: Tx, packId: number) {
   return row;
 }
 
+type Pack = typeof medicationPacks.$inferSelect;
+
+/** Changes a locked pack's reserve and records why. */
+async function changeReserve(
+  tx: Tx,
+  pack: Pack,
+  entry: { kind: "restock" | "draw" | "count" | "transfer"; delta: number; date: string; supplyLogId?: number; stockCountId?: number },
+) {
+  await tx.update(medicationPacks).set({ reserve: pack.reserve + entry.delta }).where(eq(medicationPacks.id, pack.id));
+  await tx.insert(reserveLogs).values({ medicationId: pack.medicationId, packId: pack.id, ...entry });
+  await syncPacks(tx, pack.medicationId);
+}
+
+/** Takes pills out of a locked pack's reserve into the current stock: one supply of that pack, linked to its log. */
+async function draw(tx: Tx, pack: Pack, date: string, quantity: number) {
+  if (pack.reserve < quantity) throw new UserError(`${pack.brand ?? "这个厂家"}的储备只剩 ${pack.reserve} 颗，不够取`);
+  const [supply] = await tx
+    .insert(supplyLogs)
+    .values({ medicationId: pack.medicationId, packId: pack.id, date, quantity })
+    .returning({ id: supplyLogs.id });
+  await changeReserve(tx, pack, { kind: "draw", delta: -quantity, date, supplyLogId: supply.id });
+}
+
+async function drawAll(tx: Tx, medicationId: number, date: string, draws: ReserveDrawFields) {
+  for (const { packId, quantity } of draws) {
+    const pack = await lockPack(tx, packId);
+    if (pack.medicationId !== medicationId) throw new UserError("所选厂家/包装不属于这种药，请刷新后重试");
+    await draw(tx, pack, date, quantity);
+  }
+}
+
+/** Takes one reserve entry back, with the supply it became or the pills it took out of the stock. */
+async function undoReserveLog(tx: Tx, log: typeof reserveLogs.$inferSelect) {
+  const pack = await lockPack(tx, log.packId);
+  const reserve = pack.reserve - log.delta;
+  if (reserve < 0) throw new UserError(`储备现在只有 ${pack.reserve} 颗，不够撤销这条记录`);
+  await tx.update(medicationPacks).set({ reserve }).where(eq(medicationPacks.id, pack.id));
+  if (log.supplyLogId !== null) await tx.delete(supplyLogs).where(eq(supplyLogs.id, log.supplyLogId));
+  if (log.stockCountId !== null) {
+    await tx
+      .update(stockCounts)
+      .set({ quantity: sql`${stockCounts.quantity} + ${log.delta}` })
+      .where(eq(stockCounts.id, log.stockCountId));
+  }
+  await tx.delete(reserveLogs).where(eq(reserveLogs.id, log.id));
+  await syncPacks(tx, pack.medicationId);
+}
+
+/** Only a medication being taken has a current stock to add to; anything else goes to the reserve. */
+async function assertTaking(tx: Tx, medicationId: number) {
+  const regimens = await tx.select().from(dosageRegimens).where(eq(dosageRegimens.medicationId, medicationId));
+  if (!isTaking(intakeAt(regimens, wallClock().date))) {
+    throw new UserError("这种药现在没在吃：补的药请放进储备，开始吃时再选要拿多少到当前");
+  }
+}
+
+/** A pack's current stock, from the same simulation the board shows. */
+async function stockOfPack(tx: Tx, pack: Pack, at: Moment) {
+  const medicationId = pack.medicationId;
+  const order = (await packsOf(tx, medicationId)).map((p) => p.id);
+  const supplies = await tx.select().from(supplyLogs).where(eq(supplyLogs.medicationId, medicationId));
+  const counts = await tx
+    .select()
+    .from(stockCounts)
+    .where(eq(stockCounts.medicationId, medicationId))
+    .orderBy(asc(stockCounts.date), asc(stockCounts.createdAt));
+  const regimens = await tx.select().from(dosageRegimens).where(eq(dosageRegimens.medicationId, medicationId));
+  const stays = await tx.select().from(hospitalStays);
+  const sim = simulate(
+    supplies.map((s) => ({ ...s, recordedAt: s.createdAt.getTime() })),
+    regimens,
+    {
+      today: at.date,
+      packs: order,
+      counts: counts.map((c) => ({ ...c, slotsDone: c.slotsDone as Moment["slotsDone"], recordedAt: c.createdAt.getTime() })),
+      pauses: stays.map((s) => ({ start: s.startDate, end: s.endDate })),
+    },
+  );
+  return packBalancesAt(sim, at)[order.indexOf(pack.id)] ?? 0;
+}
+
 /** Brands compared loosely: "江苏 恩华" is "江苏恩华". */
 const brandKey = (b: string | null) => (b ?? "").replace(/\s+/g, "").toLowerCase();
 
@@ -114,14 +198,21 @@ async function assertPack(tx: Tx, medicationId: number, packId: number | null) {
 
 export async function createMedication(input: CreateMedicationFields): Promise<ActionResult> {
   return run(async () => {
-    const { initialSupply, initialRegimen, brand, packUnit, perBox, reserve, ...fields } = parse(createMedicationSchema, input);
+    const { initialSupply, initialRegimen, brand, packUnit, perBox, reserve: reserved, ...fields } = parse(createMedicationSchema, input);
+    // With nothing to take there is no current stock: the pills go to the reserve.
+    const stocked = initialRegimen !== null && dailyTotal(initialRegimen) > 0 ? initialSupply : null;
+    const reserve = reserved + (stocked ? 0 : (initialSupply?.quantity ?? 0));
     await getDb().transaction(async (tx) => {
       const [med] = await tx.insert(medications).values({ ...fields, brand, packUnit, perBox, reserve }).returning({ id: medications.id });
       const [pack] = await tx
         .insert(medicationPacks)
         .values({ medicationId: med.id, brand, packUnit, perBox, reserve, position: 0 })
         .returning({ id: medicationPacks.id });
-      if (initialSupply) await tx.insert(supplyLogs).values({ medicationId: med.id, packId: pack.id, ...initialSupply });
+      if (stocked) await tx.insert(supplyLogs).values({ medicationId: med.id, packId: pack.id, ...stocked });
+      if (reserve > 0) {
+        const date = initialSupply?.date ?? wallClock().date;
+        await tx.insert(reserveLogs).values({ medicationId: med.id, packId: pack.id, kind: "restock", delta: reserve, date });
+      }
       if (initialRegimen) await tx.insert(dosageRegimens).values({ medicationId: med.id, ...initialRegimen });
     });
   });
@@ -186,6 +277,7 @@ export async function deletePack(id: number): Promise<ActionResult> {
           .set({ reserve: sql`${medicationPacks.reserve} + ${row.reserve}` })
           .where(eq(medicationPacks.id, rest[0].id));
       }
+      await tx.update(reserveLogs).set({ packId: rest[0].id }).where(eq(reserveLogs.packId, packId));
       await tx.delete(medicationPacks).where(eq(medicationPacks.id, packId));
       await syncPacks(tx, row.medicationId);
     });
@@ -217,38 +309,70 @@ export async function setReserve(packId: number, reserve: number): Promise<Actio
     const value = parse(reserveSchema, reserve);
     await getDb().transaction(async (tx) => {
       const pack = await lockPack(tx, id);
-      await tx.update(medicationPacks).set({ reserve: value }).where(eq(medicationPacks.id, id));
-      await syncPacks(tx, pack.medicationId);
+      if (value !== pack.reserve) await changeReserve(tx, pack, { kind: "count", delta: value - pack.reserve, date: wallClock().date });
     });
   });
 }
 
-/** Puts more pills of a pack aside (bought or set aside), on top of what is there. */
-export async function addReserve(packId: number, quantity: number): Promise<ActionResult> {
+/** 储备补药: pills of a pack bought or set aside on a day, on top of what is there. */
+export async function addReserve(packId: number, input: ReserveEntryFields): Promise<ActionResult> {
+  return run(async () => {
+    const id = parse(idSchema, packId);
+    const { date, quantity } = parse(reserveEntrySchema, input);
+    if (date > wallClock().date) throw new UserError("补进储备的日期不能晚于今天");
+    await getDb().transaction(async (tx) => {
+      const pack = await lockPack(tx, id);
+      if (pack.reserve + quantity > 100_000) throw new UserError("储备数量过大");
+      await changeReserve(tx, pack, { kind: "restock", delta: quantity, date });
+    });
+  });
+}
+
+/** Takes pills of a pack out of the reserve into the current stock of a medication being taken. */
+export async function drawFromReserve(packId: number, input: ReserveEntryFields): Promise<ActionResult> {
+  return run(async () => {
+    const id = parse(idSchema, packId);
+    const { date, quantity } = parse(reserveEntrySchema, input);
+    await getDb().transaction(async (tx) => {
+      const pack = await lockPack(tx, id);
+      await assertTaking(tx, pack.medicationId);
+      await draw(tx, pack, date, quantity);
+    });
+  });
+}
+
+/** Puts pills of a pack back from the current stock into the reserve: its stock is counted as what stays, as of now. */
+export async function transferToReserve(packId: number, quantity: number): Promise<ActionResult> {
   return run(async () => {
     const id = parse(idSchema, packId);
     const amount = parse(quantitySchema, quantity);
+    const clock = wallClock();
+    const at = momentAt(clock.date, clock.minutes);
     await getDb().transaction(async (tx) => {
       const pack = await lockPack(tx, id);
-      const total = pack.reserve + amount;
-      if (total > 100_000) throw new UserError("储备数量过大");
-      await tx.update(medicationPacks).set({ reserve: total }).where(eq(medicationPacks.id, id));
-      await syncPacks(tx, pack.medicationId);
+      const have = await stockOfPack(tx, pack, at);
+      if (amount > have) throw new UserError(`当前余量只有 ${have} 颗，不够转入`);
+      const left = have - amount;
+      const [count] = await tx
+        .insert(stockCounts)
+        .values({ medicationId: pack.medicationId, packId: id, date: at.date, slotsDone: at.slotsDone, quantity: left })
+        .onConflictDoUpdate({
+          target: [stockCounts.medicationId, stockCounts.date, stockCounts.packId],
+          set: { slotsDone: at.slotsDone, quantity: left, createdAt: sql`now()` },
+        })
+        .returning({ id: stockCounts.id });
+      await changeReserve(tx, pack, { kind: "transfer", delta: amount, date: at.date, stockCountId: count.id });
     });
   });
 }
 
-/** Takes pills of a pack out of the reserve into the current stock: one supply of that pack, reserve reduced. */
-export async function drawFromReserve(packId: number, input: DrawFields): Promise<ActionResult> {
+/** Undoes one reserve entry: a draw's pills go back and its supply goes, a transfer's pills return to the stock. */
+export async function deleteReserveLog(id: number): Promise<ActionResult> {
   return run(async () => {
-    const id = parse(idSchema, packId);
-    const { date, quantity } = parse(drawSchema, input);
+    const logId = parse(idSchema, id);
     await getDb().transaction(async (tx) => {
-      const pack = await lockPack(tx, id);
-      if (pack.reserve < quantity) throw new UserError(`${pack.brand ?? "这个厂家"}的储备只剩 ${pack.reserve} 颗，不够取`);
-      await tx.update(medicationPacks).set({ reserve: pack.reserve - quantity }).where(eq(medicationPacks.id, id));
-      await tx.insert(supplyLogs).values({ medicationId: pack.medicationId, packId: id, date, quantity });
-      await syncPacks(tx, pack.medicationId);
+      const [log] = await tx.select().from(reserveLogs).where(eq(reserveLogs.id, logId)).for("update");
+      if (log) await undoReserveLog(tx, log);
     });
   });
 }
@@ -267,6 +391,7 @@ export async function addSupply(medicationId: number, input: SupplyFields): Prom
     const fields = parse(supplySchema, input);
     await assertMedication(medId);
     await getDb().transaction(async (tx) => {
+      await assertTaking(tx, medId);
       await assertPack(tx, medId, fields.packId);
       await tx.insert(supplyLogs).values({ medicationId: medId, ...fields });
     });
@@ -280,15 +405,23 @@ export async function updateSupply(id: number, input: SupplyFields): Promise<Act
     await getDb().transaction(async (tx) => {
       const [log] = await tx.select({ medicationId: supplyLogs.medicationId }).from(supplyLogs).where(eq(supplyLogs.id, logId));
       if (!log) throw new UserError("记录不存在或已被删除");
+      const [drawn] = await tx.select({ id: reserveLogs.id }).from(reserveLogs).where(eq(reserveLogs.supplyLogId, logId));
+      if (drawn) throw new UserError("这笔药是从储备取的：要改请删除它（药会退回储备）再重新取用");
       await assertPack(tx, log.medicationId, fields.packId);
       await tx.update(supplyLogs).set(fields).where(eq(supplyLogs.id, logId));
     });
   });
 }
 
+/** A supply taken out of the reserve goes back there. */
 export async function deleteSupply(id: number): Promise<ActionResult> {
   return run(async () => {
-    await getDb().delete(supplyLogs).where(eq(supplyLogs.id, parse(idSchema, id)));
+    const logId = parse(idSchema, id);
+    await getDb().transaction(async (tx) => {
+      const [drawn] = await tx.select().from(reserveLogs).where(eq(reserveLogs.supplyLogId, logId)).for("update");
+      if (drawn) await undoReserveLog(tx, drawn);
+      else await tx.delete(supplyLogs).where(eq(supplyLogs.id, logId));
+    });
   });
 }
 
@@ -353,7 +486,9 @@ export async function importStock(input: ImportFields): Promise<ActionResult> {
           if (target.packUnit !== pack.packUnit || target.perBox !== pack.perBox) {
             await tx.update(medicationPacks).set(pack).where(eq(medicationPacks.id, target.id));
           }
-          if (row.reserve !== null) await tx.update(medicationPacks).set({ reserve: row.reserve }).where(eq(medicationPacks.id, target.id));
+          if (row.reserve !== null && row.reserve !== target.reserve) {
+            await changeReserve(tx, target, { kind: "count", delta: row.reserve - target.reserve, date: at.date });
+          }
           await syncPacks(tx, row.id);
           if (row.regimen) await setRegimen(row.id, row.regimen);
           if (row.stock !== null) {
@@ -375,6 +510,7 @@ export async function importStock(input: ImportFields): Promise<ActionResult> {
             .insert(medicationPacks)
             .values({ medicationId: med.id, brand, packUnit, perBox, reserve: reserve ?? 0, position: 0 })
             .returning({ id: medicationPacks.id });
+          if (reserve) await tx.insert(reserveLogs).values({ medicationId: med.id, packId: newPack.id, kind: "count", delta: reserve, date: at.date });
           if (regimen) await setRegimen(med.id, regimen);
           if (stock !== null) {
             const doses = regimen && !inHospital ? [regimen.morning, regimen.noon, regimen.evening] : [];
@@ -390,27 +526,35 @@ export async function importStock(input: ImportFields): Promise<ActionResult> {
 
 /* -------------------------------- dosage regimens -------------------------------- */
 
-/** Adds a regimen from `effectiveFrom` on; one already set for that same day is overwritten. */
-export async function saveRegimen(medicationId: number, input: RegimenFields): Promise<ActionResult> {
+/**
+ * Adds a regimen from `effectiveFrom` on; one already set for that same day is overwritten.
+ * `draws` are pills to take out of the reserve into the stock that day, chosen when it starts being taken.
+ */
+export async function saveRegimen(medicationId: number, input: RegimenFields, draws: ReserveDrawFields = []): Promise<ActionResult> {
   return run(async () => {
     const medId = parse(idSchema, medicationId);
     const { effectiveFrom, morning, noon, evening } = parse(regimenSchema, input);
+    const fromReserve = parse(reserveDrawsSchema, draws);
     await assertMedication(medId);
-    await getDb()
-      .insert(dosageRegimens)
-      .values({ medicationId: medId, effectiveFrom, morning, noon, evening })
-      .onConflictDoUpdate({
-        target: [dosageRegimens.medicationId, dosageRegimens.effectiveFrom],
-        set: { morning, noon, evening },
-      });
+    await getDb().transaction(async (tx) => {
+      await tx
+        .insert(dosageRegimens)
+        .values({ medicationId: medId, effectiveFrom, morning, noon, evening })
+        .onConflictDoUpdate({
+          target: [dosageRegimens.medicationId, dosageRegimens.effectiveFrom],
+          set: { morning, noon, evening },
+        });
+      await drawAll(tx, medId, effectiveFrom, fromReserve);
+    });
   });
 }
 
 /** Edits one regimen. Moving it onto a day that already has one replaces that day's regimen. */
-export async function updateRegimen(id: number, input: RegimenFields): Promise<ActionResult> {
+export async function updateRegimen(id: number, input: RegimenFields, draws: ReserveDrawFields = []): Promise<ActionResult> {
   return run(async () => {
     const regimenId = parse(idSchema, id);
     const fields = parse(regimenSchema, input);
+    const fromReserve = parse(reserveDrawsSchema, draws);
     await getDb().transaction(async (tx) => {
       const [current] = await tx
         .select({ medicationId: dosageRegimens.medicationId })
@@ -428,6 +572,7 @@ export async function updateRegimen(id: number, input: RegimenFields): Promise<A
           ),
         );
       await tx.update(dosageRegimens).set(fields).where(eq(dosageRegimens.id, regimenId));
+      await drawAll(tx, current.medicationId, fields.effectiveFrom, fromReserve);
     });
   });
 }

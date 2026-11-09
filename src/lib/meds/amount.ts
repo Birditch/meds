@@ -27,6 +27,9 @@ export function amountInPacks(pills: number, perBox: number | null): AmountState
   return { mode: "boxes", pills: "", boxes: packs ? String(packs) : "", perBox: String(perBox), loose: loose ? String(loose) : "" };
 }
 
+/** Nothing typed: an optional amount left alone (`resolveAmount` asks for the packs in the box form). */
+export const amountIsEmpty = (a: AmountState) => (a.mode === "pills" ? !a.pills.trim() : !a.boxes.trim() && !a.loose.trim());
+
 export type ResolvedAmount = { value: number | null } | { error: string };
 
 const halfStep = (n: number) => Number.isFinite(n) && n >= 0 && Number.isInteger(n * 2);

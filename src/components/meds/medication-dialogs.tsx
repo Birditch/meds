@@ -3,7 +3,7 @@
 import { CopyIcon, CopyPlusIcon, PackagePlusIcon, TriangleAlertIcon } from "lucide-react";
 import { useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { addPack, addReserve, addSupply, createMedication, drawFromReserve, saveRegimen, setReserve, updateMedication } from "@/app/actions";
+import { addPack, addReserve, addSupply, createMedication, drawFromReserve, saveRegimen, setReserve, transferToReserve, updateMedication } from "@/app/actions";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,11 +21,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { fmtDate, type ISODate } from "@/lib/meds/dates";
-import { describeReserve, fmtPacks, fmtQty, formatRegimen, formatRegimenShort } from "@/lib/meds/format";
+import { describeReserve, fmtPacks, fmtQty, formatRegimen, formatRegimenShort, intakeAt, isTaking, packShares, type MedicationStatus } from "@/lib/meds/format";
 import { SIMILARITY_LABEL, findSimilar, type SimilarMatch } from "@/lib/meds/similar";
 import { regimenAt, type DateRange } from "@/lib/meds/simulate";
 import { PACK_UNITS, type MedicationRecord, type PackRecord, type PackUnit } from "@/lib/meds/types";
-import { createMedicationSchema, drawSchema, medicationInfoSchema, packSchema, quantitySchema, reserveSchema } from "@/lib/meds/validation";
+import { createMedicationSchema, medicationInfoSchema, packSchema, quantitySchema, reserveEntrySchema, reserveSchema } from "@/lib/meds/validation";
 import { cn } from "@/lib/utils";
 import { DatePicker } from "./date-picker";
 import { DoseFields, FormError, PackPicker, RegimenForm, SubmitButton, SupplyForm, packLabel, parseDoses, useActionForm } from "./forms";
@@ -336,6 +336,8 @@ export function CreateMedicationDialog({
   };
 
   const same = matches.filter((x) => x.kind === "same");
+  const initialAmount = resolveAmount(amount, fields.packUnit);
+  const goesToReserve = "value" in initialAmount && !!initialAmount.value && !Object.values(doses).some((v) => Number(v) > 0);
 
   return (
     <Dialog open={open} onOpenChange={(o) => (o ? onOpenChange(true) : close())}>
@@ -430,6 +432,7 @@ export function CreateMedicationDialog({
                 <SupplyAmountInput id="init-qty" label="初始药量" value={amount} onChange={setAmount} unit={fields.packUnit} />
               </div>
               <DoseFields idPrefix="init" values={doses} onChange={setDoses} />
+              {goesToReserve && <p className="text-xs text-muted-foreground">没填服用规律：这些药会记入储备，不计入当前余量。</p>}
             </div>
             <Separator />
             <div className="grid gap-2 sm:max-w-sm">
@@ -531,6 +534,36 @@ export function EditMedicationForm({ medication, onDone }: { medication: Medicat
 
 const medLabel = (m: MedicationRecord) => [m.name, m.dosage, m.packs.map((p) => p.brand).filter(Boolean).join(" / ")].filter(Boolean).join(" · ");
 
+/** A row of mutually exclusive actions. */
+function ModeTabs<T extends string>({ label, tabs, value, onChange }: { label: string; tabs: readonly (readonly [T, string])[]; value: T; onChange: (tab: T) => void }) {
+  return (
+    <div role="tablist" aria-label={label} className="inline-flex w-fit flex-wrap rounded-md border p-0.5 text-sm">
+      {tabs.map(([key, text]) => (
+        <button
+          key={key}
+          type="button"
+          role="tab"
+          aria-selected={value === key}
+          onClick={() => onChange(key)}
+          className={cn(
+            "rounded-[5px] px-3 py-1 transition-colors",
+            value === key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const SUPPLY_TABS = [
+  ["new", "新开的药"],
+  ["draw", "从储备拉取"],
+  ["restock", "补进储备"],
+] as const;
+type SupplyTab = (typeof SUPPLY_TABS)[number][0];
+
 export function AddSupplyDialog({
   medication,
   onOpenChange,
@@ -546,31 +579,69 @@ export function AddSupplyDialog({
   /** Upcoming visit dates. */
   visits: readonly ISODate[];
 }) {
+  const taking = !medication || isTaking(intakeAt(medication.regimens, today));
+  const done = () => onOpenChange(false);
   return (
     <Dialog open={!!medication} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>补药</DialogTitle>
+          <DialogTitle>{taking ? "补药" : "补进储备"}</DialogTitle>
           <DialogDescription>{medication && medLabel(medication)}</DialogDescription>
         </DialogHeader>
         <DialogStrengthTabs medication={medication} {...switcher} />
-        {medication && (
-          <SupplyForm
-            key={medication.id}
-            today={today}
-            packs={medication.packs}
-            plan={{ medication, pauses, visits }}
-            submitLabel="添加"
-            onSubmit={(f) => addSupply(medication.id, f)}
-            onDone={() => {
-              toast.success("已添加补药记录");
-              onOpenChange(false);
-            }}
-            onCancel={() => onOpenChange(false)}
-          />
-        )}
+        {medication &&
+          (taking ? (
+            <SupplyPanel key={medication.id} medication={medication} today={today} pauses={pauses} visits={visits} onDone={done} />
+          ) : (
+            <div key={medication.id} className="grid gap-4">
+              <p className="rounded-lg bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+                这种药现在没在吃，补的药进储备，不计入当前余量。开始吃（改规律）时，可以再选要拿多少到当前。
+              </p>
+              <ReserveForms medication={medication} tab="restock" today={today} onDone={done} />
+            </div>
+          ))}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Refilling a medication being taken: newly prescribed pills, pills from the reserve, or pills for the reserve. */
+function SupplyPanel({
+  medication,
+  today,
+  pauses,
+  visits,
+  onDone,
+}: {
+  medication: MedicationRecord;
+  today: ISODate;
+  pauses: readonly DateRange[];
+  visits: readonly ISODate[];
+  onDone: () => void;
+}) {
+  const [tab, setTab] = useState<SupplyTab>("new");
+  return (
+    <div className="grid gap-4">
+      <ModeTabs label="补药来源" tabs={SUPPLY_TABS} value={tab} onChange={setTab} />
+      {tab === "new" ? (
+        <SupplyForm
+          today={today}
+          packs={medication.packs}
+          plan={{ medication, pauses, visits }}
+          submitLabel="添加"
+          onSubmit={(f) => addSupply(medication.id, f)}
+          onDone={() => {
+            toast.success("已添加补药记录");
+            onDone();
+          }}
+          onCancel={onDone}
+        />
+      ) : tab === "draw" && medication.reserve <= 0 ? (
+        <p className="rounded-lg border border-dashed py-6 text-center text-sm text-muted-foreground">储备里没有这种药，可以先“补进储备”。</p>
+      ) : (
+        <ReserveForms medication={medication} tab={tab} today={today} onDone={onDone} />
+      )}
+    </div>
   );
 }
 
@@ -603,10 +674,12 @@ export function RegimenDialog({
             today={today}
             initial={current ? { morning: current.morning, noon: current.noon, evening: current.evening } : undefined}
             existing={medication.regimens}
+            reservePacks={medication.packs}
             submitLabel="保存规律"
-            onSubmit={(f) => saveRegimen(medication.id, f)}
-            onDone={() => {
-              toast.success("服用规律已保存");
+            onSubmit={(f, draws) => saveRegimen(medication.id, f, draws)}
+            onDone={(draws) => {
+              const pills = draws.reduce((n, d) => n + d.quantity, 0);
+              toast.success(pills ? `服用规律已保存，已从储备拿 ${fmtQty(pills)} 颗计入当前` : "服用规律已保存");
               onOpenChange(false);
             }}
             onCancel={() => onOpenChange(false)}
@@ -619,15 +692,21 @@ export function RegimenDialog({
 
 /* ------------------------------------ reserve ------------------------------------ */
 
+type StockNow = Pick<MedicationStatus, "byPack" | "balanceNow">;
+
 export function ReserveDialog({
   medication,
+  status,
   onOpenChange,
   today,
+  initialTab,
   ...switcher
 }: StrengthSwitch & {
   medication: MedicationRecord | null;
+  status: StockNow | null;
   onOpenChange: (open: boolean) => void;
   today: ISODate;
+  initialTab?: ReserveTab;
 }) {
   return (
     <Dialog open={!!medication} onOpenChange={onOpenChange}>
@@ -637,18 +716,21 @@ export function ReserveDialog({
           <DialogDescription>{medication && medLabel(medication)}</DialogDescription>
         </DialogHeader>
         <DialogStrengthTabs medication={medication} {...switcher} />
-        {medication && <ReservePanel key={medication.id} medication={medication} today={today} onDone={() => onOpenChange(false)} />}
+        {medication && status && (
+          <ReservePanel key={medication.id} medication={medication} status={status} today={today} initialTab={initialTab} onDone={() => onOpenChange(false)} />
+        )}
       </DialogContent>
     </Dialog>
   );
 }
 
-type ReserveTab = "add" | "draw" | "count";
-const RESERVE_TABS: [ReserveTab, string][] = [
-  ["add", "加入储备"],
-  ["draw", "从储备取用"],
+const RESERVE_TABS = [
+  ["restock", "补进储备"],
+  ["draw", "取用到当前"],
   ["count", "盘点储备"],
-];
+  ["transfer", "当前转入储备"],
+] as const;
+export type ReserveTab = (typeof RESERVE_TABS)[number][0];
 
 /** "2 盒 14 颗（42 颗）", or "14 颗" when that says it all. */
 const reserveText = (pills: number, p: Pick<PackRecord, "perBox" | "packUnit">) => {
@@ -656,14 +738,26 @@ const reserveText = (pills: number, p: Pick<PackRecord, "perBox" | "packUnit">) 
   return p.perBox && pills >= p.perBox ? `${packs}（${fmtQty(pills)} 颗）` : packs;
 };
 
-/** Each manufacturer's reserve, kept apart: put more aside, take some into the current stock, or count it. */
-export function ReservePanel({ medication, today, onDone }: { medication: MedicationRecord; today: ISODate; onDone: () => void }) {
-  const [tab, setTab] = useState<ReserveTab>("add");
-  const [packId, setPackId] = useState(medication.packs[0]?.id ?? 0);
-  const pack = medication.packs.find((p) => p.id === packId) ?? medication.packs[0];
+/** Each manufacturer's reserve, kept apart: refill it, take some into the current stock, count it, or put stock back. */
+export function ReservePanel({
+  medication,
+  status,
+  today,
+  initialTab = "restock",
+  onDone,
+}: {
+  medication: MedicationRecord;
+  status: StockNow;
+  today: ISODate;
+  initialTab?: ReserveTab;
+  onDone: () => void;
+}) {
+  const taking = isTaking(intakeAt(medication.regimens, today));
+  const tabs = RESERVE_TABS.filter(([key]) => (key !== "draw" || taking) && (key !== "transfer" || status.balanceNow > 0));
+  const [picked, setTab] = useState<ReserveTab>(initialTab);
+  const tab = tabs.some(([key]) => key === picked) ? picked : "restock";
   const current = regimenAt(medication.regimens, today);
   const multi = medication.packs.length > 1;
-  const brand = multi ? (pack.brand ?? "未写厂家") : "";
   return (
     <div className="grid gap-4">
       <p className="text-sm text-muted-foreground">
@@ -674,7 +768,7 @@ export function ReservePanel({ medication, today, onDone }: { medication: Medica
         <div className="flex items-center justify-between gap-2">
           <span className="text-muted-foreground">{multi ? "储备合计" : "现有储备"}</span>
           <span className="text-right tabular-nums">
-            <b>{multi ? `${fmtQty(medication.reserve)} 颗` : reserveText(medication.reserve, pack)}</b>
+            <b>{multi ? `${fmtQty(medication.reserve)} 颗` : reserveText(medication.reserve, medication.packs[0])}</b>
             <span className="ml-1.5 text-muted-foreground">· {describeReserve(medication.reserve, current)}</span>
           </span>
         </div>
@@ -686,38 +780,53 @@ export function ReservePanel({ medication, today, onDone }: { medication: Medica
             </div>
           ))}
       </div>
+      <ModeTabs label="储备操作" tabs={tabs} value={tab} onChange={setTab} />
+      <ReserveForms medication={medication} status={status} tab={tab} today={today} onDone={onDone} />
+    </div>
+  );
+}
+
+/** One reserve action, with the manufacturer to do it on when there are several. */
+export function ReserveForms({
+  medication,
+  status,
+  tab,
+  today,
+  onDone,
+}: {
+  medication: MedicationRecord;
+  /** Needed for the "transfer" tab: what is in the current stock. */
+  status?: StockNow;
+  tab: ReserveTab;
+  today: ISODate;
+  onDone: () => void;
+}) {
+  const stockOf = (p: PackRecord) => (status ? (packShares(medication, status).find((s) => s.pack.id === p.id)?.stock ?? 0) : 0);
+  const [packId, setPackId] = useState(
+    () => medication.packs.find((p) => (tab === "draw" ? p.reserve > 0 : tab === "transfer" ? stockOf(p) > 0 : true))?.id ?? medication.packs[0]?.id ?? 0,
+  );
+  const pack = medication.packs.find((p) => p.id === packId) ?? medication.packs[0];
+  const multi = medication.packs.length > 1;
+  const props = { medication, pack, brand: multi ? (pack.brand ?? "未写厂家") : "", today, onDone };
+  return (
+    <div className="grid gap-4">
       {multi && (
         <PackPicker
           label="哪个厂家"
           packs={medication.packs}
           value={pack.id}
           onChange={(p) => setPackId(p.id)}
-          note={(p) => `储备 ${fmtQty(p.reserve)} 颗`}
+          note={(p) => (tab === "transfer" ? `当前 ${fmtQty(stockOf(p))} 颗` : `储备 ${fmtQty(p.reserve)} 颗`)}
         />
       )}
-      <div role="tablist" aria-label="储备操作" className="inline-flex w-fit rounded-md border p-0.5 text-sm">
-        {RESERVE_TABS.map(([key, text]) => (
-          <button
-            key={key}
-            type="button"
-            role="tab"
-            aria-selected={tab === key}
-            onClick={() => setTab(key)}
-            className={cn(
-              "rounded-[5px] px-3 py-1 transition-colors",
-              tab === key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {text}
-          </button>
-        ))}
-      </div>
-      {tab === "add" ? (
-        <ReserveAddForm key={`add-${pack.id}`} medication={medication} pack={pack} brand={brand} today={today} onDone={onDone} />
+      {tab === "restock" ? (
+        <ReserveRestockForm key={`restock-${pack.id}`} {...props} />
       ) : tab === "draw" ? (
-        <ReserveDrawForm key={`draw-${pack.id}`} pack={pack} brand={brand} today={today} onDone={onDone} />
+        <ReserveDrawForm key={`draw-${pack.id}`} {...props} />
+      ) : tab === "count" ? (
+        <ReserveCountForm key={`count-${pack.id}`} {...props} />
       ) : (
-        <ReserveCountForm key={`count-${pack.id}`} medication={medication} pack={pack} brand={brand} today={today} onDone={onDone} />
+        <ReserveTransferForm key={`transfer-${pack.id}`} {...props} stock={stockOf(pack)} />
       )}
     </div>
   );
@@ -750,8 +859,9 @@ function reservePreview({ medication, pack, brand, today }: Omit<ReserveFormProp
   return brand ? `${brand} ${fmtQty(next)} 颗，合计 ${fmtQty(total)} 颗 · ${lasts}` : `${reserveText(next, pack)} · ${lasts}`;
 }
 
-function ReserveAddForm(props: ReserveFormProps) {
-  const { pack, brand, onDone } = props;
+function ReserveRestockForm(props: ReserveFormProps) {
+  const { pack, brand, today, onDone } = props;
+  const [date, setDate] = useState(today);
   const [amount, setAmount] = useState(() => amountState("", pack.perBox));
   const { pending, error, setError, submit } = useActionForm();
   const uid = useId();
@@ -763,22 +873,28 @@ function ReserveAddForm(props: ReserveFormProps) {
       onSubmit={(e) => {
         e.preventDefault();
         if ("error" in resolved) return setError(resolved.error);
-        const parsed = quantitySchema.safeParse(value);
+        const parsed = reserveEntrySchema.safeParse({ date, quantity: value });
         if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "输入无效");
         submit(
           () => addReserve(pack.id, parsed.data),
           () => {
-            toast.success(`已加入${brand}储备 ${fmtQty(parsed.data)} 颗`);
+            toast.success(`已补进${brand}储备 ${fmtQty(parsed.data.quantity)} 颗`);
             onDone();
           },
         );
       }}
     >
-      <SupplyAmountInput id={`${uid}-qty`} label={`加入${brand}储备的数量`} value={amount} onChange={setAmount} unit={pack.packUnit} />
-      <p className="text-xs text-muted-foreground">新买来或另外放起来的药，加在现有储备上；不计入当前余量。</p>
-      {value ? <p className="text-sm tabular-nums">加入后：{reservePreview(props, pack.reserve + value)}</p> : null}
+      <div className="grid items-start gap-4">
+        <div className="grid gap-2">
+          <Label htmlFor={`${uid}-date`}>补药日期</Label>
+          <DatePicker id={`${uid}-date`} label="补药日期" value={date} onChange={setDate} today={today} />
+        </div>
+        <SupplyAmountInput id={`${uid}-qty`} label={`补进${brand}储备的数量`} value={amount} onChange={setAmount} unit={pack.packUnit} />
+      </div>
+      <p className="text-xs text-muted-foreground">新开或买来后放起来的药，加在现有储备上，不计入当前余量；记录在详情的“储备记录”里。</p>
+      {value ? <p className="text-sm tabular-nums">补进后：{reservePreview(props, pack.reserve + value)}</p> : null}
       <FormError>{error}</FormError>
-      <FormButtons pending={pending} label="加入" onCancel={onDone} />
+      <FormButtons pending={pending} label="补进储备" onCancel={onDone} />
     </form>
   );
 }
@@ -818,7 +934,7 @@ function ReserveCountForm(props: ReserveFormProps) {
   );
 }
 
-function ReserveDrawForm({ pack, brand, today, onDone }: Omit<ReserveFormProps, "medication">) {
+function ReserveDrawForm({ pack, brand, today, onDone }: ReserveFormProps) {
   const [date, setDate] = useState(today);
   const [amount, setAmount] = useState(() => amountState("", pack.perBox));
   const { pending, error, setError, submit } = useActionForm();
@@ -831,7 +947,7 @@ function ReserveDrawForm({ pack, brand, today, onDone }: Omit<ReserveFormProps, 
       onSubmit={(e) => {
         e.preventDefault();
         if ("error" in resolved) return setError(resolved.error);
-        const parsed = drawSchema.safeParse({ date, quantity: value });
+        const parsed = reserveEntrySchema.safeParse({ date, quantity: value });
         if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "输入无效");
         if (parsed.data.quantity > pack.reserve) return setError(`${brand}储备只有 ${fmtQty(pack.reserve)} 颗`);
         submit(
@@ -848,7 +964,7 @@ function ReserveDrawForm({ pack, brand, today, onDone }: Omit<ReserveFormProps, 
           <Label htmlFor={`${uid}-date`}>取用日期</Label>
           <DatePicker id={`${uid}-date`} label="取用日期" value={date} onChange={setDate} today={today} />
         </div>
-        <SupplyAmountInput id={`${uid}-qty`} label="取用数量" value={amount} onChange={setAmount} unit={pack.packUnit} />
+        <SupplyAmountInput id={`${uid}-qty`} label={`取用数量（储备 ${fmtPacks(pack.reserve, pack.perBox, pack.packUnit)}）`} value={amount} onChange={setAmount} unit={pack.packUnit} />
       </div>
       <p className="text-xs text-muted-foreground">
         取出的药记为 {fmtDate(date)} 的一笔{brand}补药、计入当前余量，{brand}储备同时减少
@@ -856,6 +972,48 @@ function ReserveDrawForm({ pack, brand, today, onDone }: Omit<ReserveFormProps, 
       </p>
       <FormError>{error}</FormError>
       <FormButtons pending={pending} label="取用" onCancel={onDone} />
+    </form>
+  );
+}
+
+/** The other way round: pills of the current stock go back into the reserve. */
+function ReserveTransferForm({ stock, ...props }: ReserveFormProps & { stock: number }) {
+  const { medication, pack, brand, today, onDone } = props;
+  // Not being taken: all of it is what is usually meant.
+  const [amount, setAmount] = useState(() =>
+    isTaking(intakeAt(medication.regimens, today)) ? amountState("", pack.perBox) : amountInPacks(stock, pack.perBox),
+  );
+  const { pending, error, setError, submit } = useActionForm();
+  const uid = useId();
+  const resolved = resolveAmount(amount, pack.packUnit);
+  const value = "value" in resolved ? resolved.value : null;
+  return (
+    <form
+      className="grid gap-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if ("error" in resolved) return setError(resolved.error);
+        const parsed = quantitySchema.safeParse(value);
+        if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "输入无效");
+        if (parsed.data > stock) return setError(`${brand}当前余量只有 ${fmtQty(stock)} 颗`);
+        submit(
+          () => transferToReserve(pack.id, parsed.data),
+          () => {
+            toast.success(`已把 ${fmtQty(parsed.data)} 颗转入${brand}储备`);
+            onDone();
+          },
+        );
+      }}
+    >
+      <SupplyAmountInput id={`${uid}-qty`} label={`转入储备的数量（当前 ${fmtPacks(stock, pack.perBox, pack.packUnit)}）`} value={amount} onChange={setAmount} unit={pack.packUnit} />
+      <p className="text-xs text-muted-foreground">从当前余量拿出来放进储备：当前余量从现在起减少（记一次盘点），储备增加。</p>
+      {value ? (
+        <p className="text-sm tabular-nums">
+          转入后：当前 {fmtQty(Math.max(0, stock - value))} 颗；储备 {reservePreview(props, pack.reserve + value)}
+        </p>
+      ) : null}
+      <FormError>{error}</FormError>
+      <FormButtons pending={pending} label="转入储备" onCancel={onDone} />
     </form>
   );
 }
