@@ -13,6 +13,8 @@ export interface SupplyRecord {
   recordedAt: number;
   /** Taken out of the reserve: deleting it puts the pills back there. */
   fromReserve: boolean;
+  /** Where the pills came from (药品来源), when recorded. */
+  source: string | null;
 }
 
 export const RESERVE_LOG_KINDS = ["restock", "draw", "count", "transfer"] as const;
@@ -27,6 +29,8 @@ export interface ReserveLogRecord {
   delta: number;
   packId: number;
   recordedAt: number;
+  /** A draw: where the pills came from, when recorded. */
+  source: string | null;
 }
 
 /** A stock count: the pills actually at home after `slotsDone` (0–3) of that day's doses. */

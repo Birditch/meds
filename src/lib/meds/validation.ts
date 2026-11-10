@@ -61,6 +61,9 @@ export const medicationSchema = packSchema.extend({
 });
 
 /** What the edit form changes: the packs are edited one by one. */
+/** Tags taken from the drug catalog, for several medications at once. */
+export const catalogTagsSchema = z.array(z.object({ id: z.number().int().positive(), tags: tagsSchema })).max(500, "药品太多");
+
 export const medicationInfoSchema = z.object({
   name: text("药品名称").min(1, "请填写药品名称"),
   dosage: text("含量/规格").min(1, "请填写含量/规格"),
@@ -91,11 +94,19 @@ export const staySchema = z
   .object({ startDate: dateSchema, endDate: dateSchema })
   .refine((s) => s.endDate >= s.startDate, "出院日期不能早于入院日期");
 
-/** Pills going into or out of a reserve on a day. */
+/** Pills going into a reserve on a day. */
 export const reserveEntrySchema = z.object({ date: dateSchema, quantity: quantitySchema });
 
+/** Where pills taken out of a reserve came from (药品来源): printed with them on the PDF lists. */
+const sourceSchema = text("药品来源", 200).min(1, "请填写药品来源");
+
+/** Pills taken out of a reserve on a day. */
+export const reserveDrawSchema = reserveEntrySchema.extend({ source: sourceSchema });
+
 /** How many pills to take out of each pack's reserve when a medication starts being taken. */
-export const reserveDrawsSchema = z.array(z.object({ packId: z.number().int().positive(), quantity: quantitySchema })).max(50, "厂家太多");
+export const reserveDrawsSchema = z
+  .array(z.object({ packId: z.number().int().positive(), quantity: quantitySchema, source: sourceSchema }))
+  .max(50, "厂家太多");
 
 export const idSchema = z.number().int().positive();
 
@@ -145,11 +156,13 @@ export const importSchema = z
 
 export type MedicationFields = z.input<typeof medicationSchema>;
 export type MedicationInfoFields = z.input<typeof medicationInfoSchema>;
+export type CatalogTagsFields = z.input<typeof catalogTagsSchema>;
 export type PackFields = z.input<typeof packSchema>;
 export type SupplyFields = z.input<typeof supplySchema>;
 export type RegimenFields = z.infer<typeof regimenSchema>;
 export type StayFields = z.infer<typeof staySchema>;
 export type ReserveEntryFields = z.infer<typeof reserveEntrySchema>;
-export type ReserveDrawFields = z.infer<typeof reserveDrawsSchema>;
+export type ReserveDrawFields = z.infer<typeof reserveDrawSchema>;
+export type ReserveDrawsFields = z.infer<typeof reserveDrawsSchema>;
 export type CreateMedicationFields = z.input<typeof createMedicationSchema>;
 export type ImportFields = z.input<typeof importSchema>;

@@ -18,6 +18,8 @@ const nextConfig: NextConfig = {
     // The two font files the PDF lists embed.
     // Keys are globs over route paths: the brackets are literal.
     "/api/reports/\\[kind\\]": [pdfFonts.regular, pdfFonts.bold],
+    // Read at runtime by src/lib/meds/drug-catalog/load.ts.
+    "/api/drug-catalog": ["./data/drug-catalog.json.gz"],
   },
   turbopack: {
     rules: {

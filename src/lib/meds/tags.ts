@@ -49,10 +49,10 @@ export const TAGS: TagDef[] = [
   { code: "doping", label: "含兴奋剂", short: "兴奋剂", group: "control", tone: "orange", aliases: ["兴奋剂", "含兴奋剂药品"] },
   { code: "special-compound", label: "含特殊药品复方制剂", short: "含特药复方", group: "control", tone: "orange", aliases: ["含特殊药品复方", "特药复方", "含麻复方"] },
   // 处方 / 非处方
-  { code: "rx", label: "处方药", short: "Rx", group: "rx", set: "rx", tone: "slate", aliases: ["处方药", "处方", "rx", "凭处方"] },
-  { code: "otc", label: "非处方药", short: "OTC", group: "rx", set: "rx", tone: "green", aliases: ["非处方药", "非处方", "otc"] },
-  { code: "otc-a", label: "甲类非处方药", short: "OTC甲", group: "rx", set: "rx", tone: "red", aliases: ["甲类非处方", "甲类otc", "otc甲", "otc甲类", "红otc"] },
-  { code: "otc-b", label: "乙类非处方药", short: "OTC乙", group: "rx", set: "rx", tone: "green", aliases: ["乙类非处方", "乙类otc", "otc乙", "otc乙类", "绿otc"] },
+  { code: "rx", label: "处方药", short: "处方药", group: "rx", set: "rx", tone: "slate", aliases: ["处方药", "处方", "rx", "凭处方"] },
+  { code: "otc", label: "非处方药", short: "非处方药", group: "rx", set: "rx", tone: "green", aliases: ["非处方药", "非处方", "otc"] },
+  { code: "otc-a", label: "甲类非处方药", short: "甲类非处方药", group: "rx", set: "rx", tone: "red", aliases: ["甲类非处方", "甲类otc", "otc甲", "otc甲类", "红otc"] },
+  { code: "otc-b", label: "乙类非处方药", short: "乙类非处方药", group: "rx", set: "rx", tone: "green", aliases: ["乙类非处方", "乙类otc", "otc乙", "otc乙类", "绿otc"] },
   // 医保
   { code: "ins", label: "医保", short: "医保", group: "insurance", set: "ins", tone: "sky", aliases: ["医保", "医保药", "医保报销"] },
   { code: "ins-a", label: "医保甲类", short: "医保甲", group: "insurance", set: "ins", tone: "green", aliases: ["甲类医保", "医保甲", "甲类"] },
@@ -70,6 +70,8 @@ export const TAGS: TagDef[] = [
   { code: "originator", label: "原研药", short: "原研", group: "origin", set: "generic", tone: "violet", aliases: ["原研", "原研药品"] },
   { code: "generic", label: "仿制药", short: "仿制", group: "origin", set: "generic", tone: "slate", aliases: ["仿制", "仿制药品"] },
   { code: "consistency", label: "通过一致性评价", short: "过评", group: "origin", tone: "green", aliases: ["过评", "一致性评价", "通过一致性评价"] },
+  { code: "tcm", label: "中成药", short: "中成药", group: "origin", tone: "slate", aliases: ["中药", "中成药品"] },
+  { code: "biologic", label: "生物制品", short: "生物制品", group: "origin", tone: "slate", aliases: ["生物药", "生物制剂"] },
   // 抗菌药物分级（《抗菌药物临床应用管理办法》）
   { code: "abx", label: "抗菌药物", short: "抗菌药", group: "antibacterial", set: "abx", tone: "orange", aliases: ["抗菌药", "抗生素", "抗菌"] },
   { code: "abx-unrestricted", label: "抗菌药物·非限制使用级", short: "抗菌·非限制", group: "antibacterial", set: "abx", tone: "orange", aliases: ["非限制使用级", "非限制级", "非限制"] },

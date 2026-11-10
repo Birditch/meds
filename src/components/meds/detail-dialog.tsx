@@ -22,6 +22,7 @@ import type { DateRange, Moment } from "@/lib/meds/simulate";
 import type { MedicationRecord } from "@/lib/meds/types";
 import { visitOrdinal } from "@/lib/meds/visits";
 import { ConfirmDelete, RegimenTimeline, ReserveHistory, SupplyHistory } from "./history";
+import { keepDialogForSuggestions } from "./catalog-fields";
 import { EditMedicationForm, ReservePanel } from "./medication-dialogs";
 import { PackAmounts, PacksPanel } from "./packs";
 import { StatusBadge, toneText } from "./status-badge";
@@ -73,7 +74,7 @@ export function DetailDialog({
         onOpenChange(o);
       }}
     >
-      <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-6xl">
+      <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-6xl" onEscapeKeyDown={keepDialogForSuggestions}>
         {medication && status && (
           <>
             <DialogHeader>

@@ -33,7 +33,7 @@ const med = (
   packs: [{ id: 1, brand: null, packUnit: "盒", perBox, reserve }],
   reserve,
   tags: [],
-  supplies: supplies.map(([date, quantity]) => ({ id: nextId++, date, quantity, packId: null, recordedAt: 0, fromReserve: false })),
+  supplies: supplies.map(([date, quantity]) => ({ id: nextId++, date, quantity, packId: null, recordedAt: 0, fromReserve: false, source: null })),
   counts: [],
   reserveLogs: [],
   regimens: [{ id: nextId++, effectiveFrom: "2026-11-01", morning: daily === 2 ? 1 : 0, noon: 0, evening: 1 }],
@@ -93,13 +93,16 @@ describe("visit list", () => {
   it("lists every supply as a purchase", () => {
     expect(purchaseLines(A, NOW.date)).toEqual(["2026.11.01 周日 购买 70 颗（5 盒）"]);
     // Less than a box: no pack count.
-    expect(purchaseLines({ ...A, supplies: [{ id: 98, date: "2026-11-02", quantity: 10, packId: null, recordedAt: 0, fromReserve: false }] }, NOW.date)).toEqual([
+    expect(purchaseLines({ ...A, supplies: [{ id: 98, date: "2026-11-02", quantity: 10, packId: null, recordedAt: 0, fromReserve: false, source: null }] }, NOW.date)).toEqual([
       "2026.11.02 周一 购买 10 颗",
     ]);
-    const planned = { ...C, supplies: [...C.supplies, { id: 99, date: "2026-11-20", quantity: 30, packId: null, recordedAt: 0, fromReserve: false }] };
+    const planned = { ...C, supplies: [...C.supplies, { id: 99, date: "2026-11-20", quantity: 30, packId: null, recordedAt: 0, fromReserve: false, source: null }] };
     expect(purchaseLines(planned, NOW.date)).toEqual(["2026.11.01 周日 购买 200 颗", "2026.11.20 周五 计划购买 30 颗"]);
-    const drawn = { ...A, supplies: [{ id: 97, date: "2026-11-02", quantity: 10, packId: null, recordedAt: 0, fromReserve: true }] };
-    expect(purchaseLines(drawn, NOW.date)).toEqual(["2026.11.02 周一 从储备取用 10 颗"]);
+    const drawn = { ...A, supplies: [{ id: 97, date: "2026-11-02", quantity: 14, packId: null, recordedAt: 0, fromReserve: true, source: "从京东大药房购买了一盒" }] };
+    expect(purchaseLines(drawn, NOW.date)).toEqual(["2026.11.02 周一 从储备取用 14 颗（1 盒），来源：从京东大药房购买了一盒"]);
+    // Drawn before sources were recorded: just no source.
+    const old = { ...A, supplies: [{ id: 96, date: "2026-11-02", quantity: 10, packId: null, recordedAt: 0, fromReserve: true, source: null }] };
+    expect(purchaseLines(old, NOW.date)).toEqual(["2026.11.02 周一 从储备取用 10 颗"]);
   });
 });
 
@@ -176,7 +179,7 @@ describe("manufacturers and tags", () => {
       { id: 8, brand: "江苏恩华", packUnit: "盒", perBox: 20, reserve: 0 },
     ],
     tags: ["psy2", "rx"],
-    supplies: [{ id: 1, date: "2026-11-02", quantity: 40, packId: 8, recordedAt: 0, fromReserve: false }],
+    supplies: [{ id: 1, date: "2026-11-02", quantity: 40, packId: 8, recordedAt: 0, fromReserve: false, source: null }],
   };
 
   it("names every manufacturer and the one each purchase came from", () => {

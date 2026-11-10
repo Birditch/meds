@@ -28,4 +28,13 @@ describe("tags", () => {
     expect(isSpecialRx(["rx", "psy2"])).toBe(true);
     expect(isSpecialRx(["rx"])).toBe(false);
   });
+
+  it("shows Rx / OTC in Chinese, but still understands the letters", () => {
+    expect(tagLabel("rx").short).toBe("处方药");
+    expect(tagLabel("otc").short).toBe("非处方药");
+    expect(tagLabel("otc-a").short).toBe("甲类非处方药");
+    expect(resolveTag("Rx")).toBe("rx");
+    expect(resolveTag("OTC")).toBe("otc");
+    expect(resolveTag("otc乙")).toBe("otc-b");
+  });
 });

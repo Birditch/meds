@@ -92,7 +92,7 @@ export const specialRxText = (m: Pick<MedicationRecord, "tags">) =>
 /** The pack a supply was bought in, when recorded. */
 const packOf = (m: MedicationRecord, id: number | null): PackRecord | undefined => (id === null ? undefined : m.packs.find((p) => p.id === id));
 
-/** "2026.11.05 周四 购买 28 颗（4 盒 · 江苏恩华）", newest last; packs only from one pack up. */
+/** "2026.11.05 周四 购买 28 颗（4 盒 · 江苏恩华）", then "，来源：…" when recorded; newest last; packs only from one pack up. */
 export function purchaseLines(m: MedicationRecord, today: ISODate): string[] {
   return [...m.supplies]
     .sort((a, b) => (a.date === b.date ? a.recordedAt - b.recordedAt : a.date < b.date ? -1 : 1))
@@ -103,7 +103,7 @@ export function purchaseLines(m: MedicationRecord, today: ISODate): string[] {
         m.packs.length > 1 ? (packOf(m, s.packId)?.brand ?? null) : null,
       ].filter(Boolean);
       const verb = s.fromReserve ? "从储备取用" : s.date > today ? "计划购买" : "购买";
-      return `${fmtDate(s.date)} ${verb} ${fmtQty(s.quantity)} 颗${parts.length ? `（${parts.join(" · ")}）` : ""}`;
+      return `${fmtDate(s.date)} ${verb} ${fmtQty(s.quantity)} 颗${parts.length ? `（${parts.join(" · ")}）` : ""}${s.source ? `，来源：${s.source}` : ""}`;
     });
 }
 

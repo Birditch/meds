@@ -73,6 +73,8 @@ export const supplyLogs = pgTable(
     quantity: numeric({ precision: 10, scale: 1, mode: "number" }).notNull(),
     /** The pack bought (which manufacturer), when known. */
     packId: integer().references(() => medicationPacks.id, { onDelete: "set null" }),
+    /** Where the pills came from (药品来源), written when they are taken out of the reserve; printed on the lists. */
+    source: text(),
     /** When the entry was made: orders it against a stock count on the same day. */
     createdAt: timestamp({ withTimezone: true, mode: "date" }).notNull().defaultNow(),
   },

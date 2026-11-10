@@ -12,6 +12,7 @@ import { intakeAt, isTaking } from "@/lib/meds/format";
 import { dailyTotal, momentAt, packBalancesAt, simulate, type Moment } from "@/lib/meds/simulate";
 import type { ActionResult } from "@/lib/meds/types";
 import {
+  catalogTagsSchema,
   createMedicationSchema,
   dateSchema,
   idSchema,
@@ -20,6 +21,7 @@ import {
   packSchema,
   quantitySchema,
   regimenSchema,
+  reserveDrawSchema,
   reserveDrawsSchema,
   reserveEntrySchema,
   reserveSchema,
@@ -27,10 +29,12 @@ import {
   supplySchema,
   type CreateMedicationFields,
   type ImportFields,
+  type CatalogTagsFields,
   type MedicationInfoFields,
   type PackFields,
   type RegimenFields,
   type ReserveDrawFields,
+  type ReserveDrawsFields,
   type ReserveEntryFields,
   type StayFields,
   type SupplyFields,
@@ -109,20 +113,20 @@ async function changeReserve(
 }
 
 /** Takes pills out of a locked pack's reserve into the current stock: one supply of that pack, linked to its log. */
-async function draw(tx: Tx, pack: Pack, date: string, quantity: number) {
+async function draw(tx: Tx, pack: Pack, date: string, quantity: number, source: string) {
   if (pack.reserve < quantity) throw new UserError(`${pack.brand ?? "这个厂家"}的储备只剩 ${pack.reserve} 颗，不够取`);
   const [supply] = await tx
     .insert(supplyLogs)
-    .values({ medicationId: pack.medicationId, packId: pack.id, date, quantity })
+    .values({ medicationId: pack.medicationId, packId: pack.id, date, quantity, source })
     .returning({ id: supplyLogs.id });
   await changeReserve(tx, pack, { kind: "draw", delta: -quantity, date, supplyLogId: supply.id });
 }
 
-async function drawAll(tx: Tx, medicationId: number, date: string, draws: ReserveDrawFields) {
-  for (const { packId, quantity } of draws) {
+async function drawAll(tx: Tx, medicationId: number, date: string, draws: ReserveDrawsFields) {
+  for (const { packId, quantity, source } of draws) {
     const pack = await lockPack(tx, packId);
     if (pack.medicationId !== medicationId) throw new UserError("所选厂家/包装不属于这种药，请刷新后重试");
-    await draw(tx, pack, date, quantity);
+    await draw(tx, pack, date, quantity, source);
   }
 }
 
@@ -228,6 +232,16 @@ export async function updateMedication(id: number, input: MedicationInfoFields):
   });
 }
 
+/** Tags accepted from the drug catalog, all or none. */
+export async function applyCatalogTags(items: CatalogTagsFields): Promise<ActionResult> {
+  return run(async () => {
+    const list = parse(catalogTagsSchema, items);
+    await getDb().transaction(async (tx) => {
+      for (const { id, tags } of list) await tx.update(medications).set({ tags }).where(eq(medications.id, id));
+    });
+  });
+}
+
 /* ------------------------------ packs (manufacturers) ------------------------------ */
 
 /** Another manufacturer's / brand's pack of the same pill, with its own stock and reserve. */
@@ -329,14 +343,14 @@ export async function addReserve(packId: number, input: ReserveEntryFields): Pro
 }
 
 /** Takes pills of a pack out of the reserve into the current stock of a medication being taken. */
-export async function drawFromReserve(packId: number, input: ReserveEntryFields): Promise<ActionResult> {
+export async function drawFromReserve(packId: number, input: ReserveDrawFields): Promise<ActionResult> {
   return run(async () => {
     const id = parse(idSchema, packId);
-    const { date, quantity } = parse(reserveEntrySchema, input);
+    const { date, quantity, source } = parse(reserveDrawSchema, input);
     await getDb().transaction(async (tx) => {
       const pack = await lockPack(tx, id);
       await assertTaking(tx, pack.medicationId);
-      await draw(tx, pack, date, quantity);
+      await draw(tx, pack, date, quantity, source);
     });
   });
 }
@@ -530,7 +544,7 @@ export async function importStock(input: ImportFields): Promise<ActionResult> {
  * Adds a regimen from `effectiveFrom` on; one already set for that same day is overwritten.
  * `draws` are pills to take out of the reserve into the stock that day, chosen when it starts being taken.
  */
-export async function saveRegimen(medicationId: number, input: RegimenFields, draws: ReserveDrawFields = []): Promise<ActionResult> {
+export async function saveRegimen(medicationId: number, input: RegimenFields, draws: ReserveDrawsFields = []): Promise<ActionResult> {
   return run(async () => {
     const medId = parse(idSchema, medicationId);
     const { effectiveFrom, morning, noon, evening } = parse(regimenSchema, input);
@@ -550,7 +564,7 @@ export async function saveRegimen(medicationId: number, input: RegimenFields, dr
 }
 
 /** Edits one regimen. Moving it onto a day that already has one replaces that day's regimen. */
-export async function updateRegimen(id: number, input: RegimenFields, draws: ReserveDrawFields = []): Promise<ActionResult> {
+export async function updateRegimen(id: number, input: RegimenFields, draws: ReserveDrawsFields = []): Promise<ActionResult> {
   return run(async () => {
     const regimenId = parse(idSchema, id);
     const fields = parse(regimenSchema, input);

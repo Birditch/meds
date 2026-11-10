@@ -3,6 +3,7 @@
 import { Loader2Icon } from "lucide-react";
 import { useId, useMemo, useState, useTransition, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { fmtPacks, formatRegimenShort, fmtQty, packNote, startsTaking } from "@/lib/meds/format";
 import { addDays, fmtDate, fmtDay, weekdayCN, type ISODate } from "@/lib/meds/dates";
@@ -10,7 +11,7 @@ import { balanceAt, regimenAt, simulate, supplyToLast, type DateRange } from "@/
 import { clinicDayOnOrBefore, usualNextVisit } from "@/lib/meds/visits";
 import type { ActionResult, MedicationRecord, PackRecord, RegimenRecord } from "@/lib/meds/types";
 import { cn } from "@/lib/utils";
-import { regimenSchema, supplySchema, type RegimenFields, type ReserveDrawFields, type SupplyFields } from "@/lib/meds/validation";
+import { regimenSchema, supplySchema, type RegimenFields, type ReserveDrawsFields, type SupplyFields } from "@/lib/meds/validation";
 import { DatePicker } from "./date-picker";
 import { QuantityInput, parseQuantity } from "./quantity-input";
 import { SupplyAmountInput, amountIsEmpty, amountState, resolveAmount, type AmountState } from "./supply-amount";
@@ -303,7 +304,20 @@ export function parseDoses(values: { morning: string; noon: string; evening: str
 
 const doseText = (n: number | undefined) => (n === undefined ? "0" : fmtQty(n));
 
-/** Starting to take a medication: how many pills of each manufacturer's reserve to bring into the current stock. */
+/** Where pills taken out of a reserve came from: printed with them on the PDF lists. */
+export function SourceInput({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="grid gap-2">
+      <Label htmlFor={id}>药品来源</Label>
+      <Input id={id} aria-required placeholder="如：从京东大药房购买了一盒" maxLength={200} value={value} onChange={(e) => onChange(e.target.value)} />
+      <p className="text-xs text-muted-foreground">必填，会写进 PDF 清单的购买记录。</p>
+    </div>
+  );
+}
+
+type DrawInput = { amount: AmountState; source: string };
+
+/** Starting to take a medication: how many pills of each manufacturer's reserve to bring into the current stock, and from where they came. */
 function ReserveDrawInputs({
   packs,
   values,
@@ -312,8 +326,8 @@ function ReserveDrawInputs({
 }: {
   /** The packs that have a reserve. */
   packs: readonly PackRecord[];
-  values: Record<number, AmountState>;
-  onChange: (values: Record<number, AmountState>) => void;
+  values: Record<number, DrawInput>;
+  onChange: (values: Record<number, DrawInput>) => void;
   /** The day the pills enter the stock: the regimen's first. */
   date: ISODate;
 }) {
@@ -326,16 +340,22 @@ function ReserveDrawInputs({
         </p>
         <p className="text-xs text-muted-foreground">拿出的药记为 {fmtDate(date)} 的一笔补药、计入当前余量，储备同时减少。</p>
       </div>
-      {packs.map((p) => (
-        <SupplyAmountInput
-          key={p.id}
-          id={`${uid}-${p.id}`}
-          label={`${p.brand ?? "未写厂家"}（储备 ${fmtPacks(p.reserve, p.perBox, p.packUnit)}）`}
-          value={values[p.id] ?? amountState("", p.perBox)}
-          onChange={(a) => onChange({ ...values, [p.id]: a })}
-          unit={p.packUnit}
-        />
-      ))}
+      {packs.map((p) => {
+        const value = values[p.id] ?? { amount: amountState("", p.perBox), source: "" };
+        const set = (patch: Partial<DrawInput>) => onChange({ ...values, [p.id]: { ...value, ...patch } });
+        return (
+          <div key={p.id} className="grid gap-3">
+            <SupplyAmountInput
+              id={`${uid}-${p.id}`}
+              label={`${p.brand ?? "未写厂家"}（储备 ${fmtPacks(p.reserve, p.perBox, p.packUnit)}）`}
+              value={value.amount}
+              onChange={(amount) => set({ amount })}
+              unit={p.packUnit}
+            />
+            {!amountIsEmpty(value.amount) && <SourceInput id={`${uid}-${p.id}-source`} value={value.source} onChange={(source) => set({ source })} />}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -359,8 +379,8 @@ export function RegimenForm({
   /** The medication's packs: when this regimen starts it being taken, part of their reserve can come along. */
   reservePacks?: readonly PackRecord[];
   submitLabel?: string;
-  onSubmit: (fields: RegimenFields, draws: ReserveDrawFields) => Promise<ActionResult>;
-  onDone?: (draws: ReserveDrawFields) => void;
+  onSubmit: (fields: RegimenFields, draws: ReserveDrawsFields) => Promise<ActionResult>;
+  onDone?: (draws: ReserveDrawsFields) => void;
   onCancel?: () => void;
 }) {
   const [effectiveFrom, setEffectiveFrom] = useState(initial?.effectiveFrom ?? today);
@@ -372,7 +392,7 @@ export function RegimenForm({
   const { pending, error, setError, submit } = useActionForm();
   const clash = existing.find((r) => r.effectiveFrom === effectiveFrom && r.id !== editingId);
   const idPrefix = useId();
-  const [drawAmounts, setDrawAmounts] = useState<Record<number, AmountState>>({});
+  const [drawInputs, setDrawInputs] = useState<Record<number, DrawInput>>({});
   const { morning, noon, evening } = parseDoses(doses);
   const withReserve = reservePacks?.filter((p) => p.id > 0 && p.reserve > 0) ?? [];
   const starting =
@@ -389,16 +409,17 @@ export function RegimenForm({
         e.preventDefault();
         const parsed = regimenSchema.safeParse({ effectiveFrom, ...parseDoses(doses) });
         if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "输入无效");
-        const draws: ReserveDrawFields = [];
+        const draws: ReserveDrawsFields = [];
         for (const p of starting ? withReserve : []) {
           const brand = p.brand ?? "这个厂家";
-          const typed = drawAmounts[p.id];
-          if (!typed || amountIsEmpty(typed)) continue;
-          const amount = resolveAmount(typed, p.packUnit);
+          const typed = drawInputs[p.id];
+          if (!typed || amountIsEmpty(typed.amount)) continue;
+          const amount = resolveAmount(typed.amount, p.packUnit);
           if ("error" in amount) return setError(`${brand}：${amount.error}`);
           if (!amount.value) continue;
           if (amount.value > p.reserve) return setError(`${brand}的储备只有 ${fmtQty(p.reserve)} 颗`);
-          draws.push({ packId: p.id, quantity: amount.value });
+          if (!typed.source.trim()) return setError(`${brand}：请填写药品来源`);
+          draws.push({ packId: p.id, quantity: amount.value, source: typed.source });
         }
         submit(
           () => onSubmit(parsed.data, draws),
@@ -411,7 +432,7 @@ export function RegimenForm({
         <DatePicker id={`${idPrefix}-date`} label="生效日期" value={effectiveFrom} onChange={setEffectiveFrom} today={today} />
       </div>
       <DoseFields idPrefix={idPrefix} values={doses} onChange={setDoses} />
-      {starting && <ReserveDrawInputs packs={withReserve} values={drawAmounts} onChange={setDrawAmounts} date={effectiveFrom} />}
+      {starting && <ReserveDrawInputs packs={withReserve} values={drawInputs} onChange={setDrawInputs} date={effectiveFrom} />}
       <p className="text-xs text-muted-foreground">
         从 {fmtDate(effectiveFrom)} 当天起按新规律扣减，此前的日期仍按当时生效的规律计算。
         {clash && (

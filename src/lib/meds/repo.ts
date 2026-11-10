@@ -19,6 +19,7 @@ export async function listMedications(): Promise<MedicationRecord[]> {
     db.select().from(reserveLogs).orderBy(asc(reserveLogs.date), asc(reserveLogs.id)),
   ]);
   const drawn = new Set(logs.map((l) => l.supplyLogId));
+  const sourceOf = new Map(supplies.map((s) => [s.id, s.source]));
 
   const packsOf = new Map<number, PackRecord[]>();
   for (const p of packs) {
@@ -68,10 +69,11 @@ export async function listMedications(): Promise<MedicationRecord[]> {
       packId: s.packId,
       recordedAt: s.createdAt.getTime(),
       fromReserve: drawn.has(s.id),
+      source: s.source,
     });
   }
   for (const l of logs) {
-    byId.get(l.medicationId)?.reserveLogs.push({ id: l.id, date: l.date, kind: l.kind, delta: l.delta, packId: l.packId, recordedAt: l.createdAt.getTime() });
+    byId.get(l.medicationId)?.reserveLogs.push({ id: l.id, date: l.date, kind: l.kind, delta: l.delta, packId: l.packId, recordedAt: l.createdAt.getTime(), source: l.supplyLogId === null ? null : (sourceOf.get(l.supplyLogId) ?? null) });
   }
   for (const c of counts) {
     byId.get(c.medicationId)?.counts.push({

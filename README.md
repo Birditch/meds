@@ -25,10 +25,18 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   supplies instead, or **作为模板**: fill the form from it (name, strength, default pack, tags; not
   its stock, regimen or reserve) to change the strength. Creating it anyway asks for confirmation
   first (after a template, only when it is still the very same medication).
+- **Drug catalog (药品库)**: the name, strength and manufacturer fields suggest from the national list while
+  you type (name, brand, pinyin, manufacturer or approval number), and what you fill in is matched automatically,
+  allowing for a mistyped character, a missing form, 200mg for 0.2g, a bare 40 for 40mg, and short manufacturer
+  names. A match brings the pack sizes and the tags the record establishes: 医保甲 / 乙, 国谈, 进口 / 国产 (from
+  the approval number), 中成药 / 生物制品, 抗菌药, 注射 / 外用, and 麻醉 / 精一 / 精二 from the 2025 lists (those
+  also imply 处方药). Everything stays editable. The source has no 处方药 / 非处方药 column, so other drugs are
+  left for you to mark. **匹配药品库** on the board checks every existing medication; nothing changes until you
+  accept it, and 全部采用 only adds tags, never replaces one you set.
 - **Tags (标签)**: a catalog of the categories a prescription depends on — 麻醉药品 / 第一类 / 第二类精神药品,
   医疗用毒性 / 放射性 / 易制毒 / 含兴奋剂, 处方药 / 非处方药 (甲类 / 乙类), 医保甲 / 乙类 / 自费 / 门诊慢特病,
   基药 / 集采 / 国谈 / 双通道, 进口 / 国产, 原研 / 仿制 / 过评, the antibacterial grades, storage and use
-  notes — plus your own. Tags of one kind exclude each other (精一 or 精二, Rx or OTC). They show on
+  notes — plus your own. Tags of one kind exclude each other (精一 or 精二, 处方药 or 非处方药). They show on
   the cards, filter the board and are searchable. The PDFs print only the tags that matter when
   getting the medication (麻 / 精一 / 精二 / 毒 / 易制毒…, 进口, and your own); the visit PDF lists the
   ones that need a special prescription.
@@ -67,7 +75,8 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
 - **Reserve (药物储备)** (管理储备 on each card): extra pills kept at home, outside the stock and the projection, per
   manufacturer. The app only says how many whole days they would last on today's regimen.
   "补进储备" records a dated refill of the reserve, "取用到当前" moves pills from the reserve into the
-  stock as one supply log of that manufacturer, "盘点储备" replaces the number with a count, and
+  stock as one supply log of that manufacturer, with a required 药品来源 (where they came from) printed
+  in the purchase records of the visit and stock PDFs, "盘点储备" replaces the number with a count, and
   "当前转入储备" moves pills back from the stock (recorded as a stock count of what stays).
   Every change is listed under 储备记录 in the detail view and can be undone there.
 - **Where a refill goes**: a medication not being taken has no current stock to add to, so its
@@ -188,6 +197,27 @@ the database.
 See [docs/deploy.md](docs/deploy.md): Docker Compose on the host, host PostgreSQL, nginx in front,
 Cloudflare Access at the edge.
 
+## Updating the drug catalog
+
+`data/drug-catalog.json.gz` is generated from the PDF that 国家医保局 publishes at
+<https://code.nhsa.gov.cn> (《医保药品分类与代码数据库》, 西药和中成药). On a Mac:
+
+```sh
+swiftc -O -o /tmp/extract scripts/drug-catalog/extract-nhsa-pdf.swift
+/tmp/extract 医保药品分类与代码数据.pdf 0 99999 > rows.jsonl   # about 10,000 pages; split the range to run in parallel
+node scripts/drug-catalog/build.mjs rows.jsonl 2026-04-10     # the date the PDF was maintained to
+pnpm test
+```
+
+The tests load the real file. When the 麻醉 / 精神 lists change, or a new product appears on them, update
+`CONTROLLED` in `src/lib/meds/drug-catalog/derive.ts`: it holds whole registered names on purpose.
+
+Some long strengths (compounds and infusions, about 5% of distinct strengths) are clipped in the source PDF
+and can show up cut off.
+
 ## License
 
 [MIT](LICENSE)
+
+`data/drug-catalog.json.gz` is derived from data published by 国家医疗保障局 and is not covered by the MIT
+license.

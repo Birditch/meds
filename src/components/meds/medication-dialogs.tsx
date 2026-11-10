@@ -24,11 +24,23 @@ import { fmtDate, type ISODate } from "@/lib/meds/dates";
 import { describeReserve, fmtPacks, fmtQty, formatRegimen, formatRegimenShort, intakeAt, isTaking, packShares, type MedicationStatus } from "@/lib/meds/format";
 import { SIMILARITY_LABEL, findSimilar, type SimilarMatch } from "@/lib/meds/similar";
 import { regimenAt, type DateRange } from "@/lib/meds/simulate";
+import type { CatalogMatch } from "@/lib/meds/drug-catalog/match";
+import { normalizeTags } from "@/lib/meds/tags";
 import { PACK_UNITS, type MedicationRecord, type PackRecord, type PackUnit } from "@/lib/meds/types";
-import { createMedicationSchema, medicationInfoSchema, packSchema, quantitySchema, reserveEntrySchema, reserveSchema } from "@/lib/meds/validation";
+import { createMedicationSchema, medicationInfoSchema, packSchema, quantitySchema, reserveDrawSchema, reserveEntrySchema, reserveSchema } from "@/lib/meds/validation";
 import { cn } from "@/lib/utils";
 import { DatePicker } from "./date-picker";
-import { DoseFields, FormError, PackPicker, RegimenForm, SubmitButton, SupplyForm, packLabel, parseDoses, useActionForm } from "./forms";
+import {
+  CatalogMakerInput,
+  CatalogMatchNote,
+  CatalogNameInput,
+  CatalogPackChips,
+  CatalogStrengthInput,
+  CatalogTagSuggestion,
+  keepDialogForSuggestions,
+  useCatalogMatch,
+} from "./catalog-fields";
+import { DoseFields, FormError, PackPicker, RegimenForm, SourceInput, SubmitButton, SupplyForm, packLabel, parseDoses, useActionForm } from "./forms";
 import { SupplyAmountInput, amountInPacks, amountState, resolveAmount, type AmountState } from "./supply-amount";
 import { DialogStrengthTabs, type StrengthSwitch } from "./strength-tabs";
 import { TagBadges, TagPicker } from "./tags";
@@ -48,41 +60,65 @@ function NameInputs({
   values,
   onChange,
   dosageRef,
+  catalog,
 }: {
   values: Pick<FieldValues, "name" | "dosage">;
   onChange: (v: Partial<FieldValues>) => void;
   dosageRef?: React.Ref<HTMLInputElement>;
+  /** Suggest from the drug catalog while typing. */
+  catalog?: { match: CatalogMatch | null; onPick: (drug: { name: string; strength: string }) => void };
 }) {
   const uid = useId();
   return (
     <>
       <div className="grid gap-2">
         <Label htmlFor={`${uid}-name`}>药品名称</Label>
-        <Input
-          id={`${uid}-name`}
-          placeholder="通用名，如：氯硝西泮片"
-          autoComplete="off"
-          value={values.name}
-          onChange={(e) => onChange({ name: e.target.value })}
-          required
-        />
+        {catalog ? (
+          <CatalogNameInput id={`${uid}-name`} value={values.name} onChange={(name) => onChange({ name })} onPick={catalog.onPick} />
+        ) : (
+          <Input
+            id={`${uid}-name`}
+            placeholder="通用名，如：氯硝西泮片"
+            autoComplete="off"
+            value={values.name}
+            onChange={(e) => onChange({ name: e.target.value })}
+            required
+          />
+        )}
       </div>
       <div className="grid gap-2">
         <Label htmlFor={`${uid}-dosage`}>含量/规格</Label>
-        <Input
-          ref={dosageRef}
-          id={`${uid}-dosage`}
-          placeholder="如：2mg"
-          value={values.dosage}
-          onChange={(e) => onChange({ dosage: e.target.value })}
-          required
-        />
+        {catalog ? (
+          <CatalogStrengthInput id={`${uid}-dosage`} inputRef={dosageRef} value={values.dosage} onChange={(dosage) => onChange({ dosage })} strengths={catalog.match?.strengths ?? []} />
+        ) : (
+          <Input
+            ref={dosageRef}
+            id={`${uid}-dosage`}
+            placeholder="如：2mg"
+            value={values.dosage}
+            onChange={(e) => onChange({ dosage: e.target.value })}
+            required
+          />
+        )}
       </div>
     </>
   );
 }
 
-export function PackInputs({ values, onChange, brandRequired }: { values: PackValues; onChange: (v: Partial<PackValues>) => void; brandRequired?: boolean }) {
+export function PackInputs({
+  values,
+  onChange,
+  brandRequired,
+  catalog,
+  brandRef,
+}: {
+  values: PackValues;
+  onChange: (v: Partial<PackValues>) => void;
+  brandRequired?: boolean;
+  /** Set (even to null) to suggest manufacturers and pack sizes from the drug catalog. */
+  catalog?: CatalogMatch | null;
+  brandRef?: React.Ref<HTMLInputElement>;
+}) {
   const uid = useId();
   return (
     <>
@@ -90,13 +126,25 @@ export function PackInputs({ values, onChange, brandRequired }: { values: PackVa
         <Label htmlFor={`${uid}-brand`}>
           厂家 / 品牌 {!brandRequired && <span className="font-normal text-muted-foreground">（选填）</span>}
         </Label>
-        <Input
-          id={`${uid}-brand`}
-          placeholder="如：江苏恩华"
-          value={values.brand}
-          onChange={(e) => onChange({ brand: e.target.value })}
-          required={brandRequired}
-        />
+        {catalog !== undefined ? (
+          <CatalogMakerInput
+            id={`${uid}-brand`}
+            inputRef={brandRef}
+            match={catalog}
+            required={brandRequired}
+            value={values.brand}
+            onChange={(brand) => onChange({ brand })}
+            onPick={(brand, pack) => onChange({ brand, ...pack })}
+          />
+        ) : (
+          <Input
+            id={`${uid}-brand`}
+            placeholder="如：江苏恩华"
+            value={values.brand}
+            onChange={(e) => onChange({ brand: e.target.value })}
+            required={brandRequired}
+          />
+        )}
       </div>
       <div className="grid gap-2">
         <div className="flex items-center justify-between gap-2">
@@ -130,6 +178,7 @@ export function PackInputs({ values, onChange, brandRequired }: { values: PackVa
           onChange={(e) => onChange({ perBox: e.target.value.replace(/[^\d.]/g, "") })}
         />
       </div>
+      {catalog !== undefined && <CatalogPackChips match={catalog} value={values} onPick={onChange} />}
     </>
   );
 }
@@ -215,12 +264,16 @@ export function CreateMedicationDialog({
   onSupply: (id: number) => void;
 }) {
   const [fields, setFields] = useState<FieldValues>(emptyFields);
-  const [tags, setTags] = useState<string[]>([]);
+  /** Tags chosen by hand; what the catalog establishes is added at render. */
+  const [manualTags, setTags] = useState<string[]>([]);
+  /** Catalog tags taken off for one particular match; a different drug starts over. */
+  const [removedAuto, setRemovedAuto] = useState({ key: "", tags: [] as string[] });
   /** Adding a manufacturer to this medication instead of a new medication. */
   const [target, setTarget] = useState<MedicationRecord | null>(null);
   /** The existing medication the form was filled from (another strength of it, usually). */
   const [template, setTemplate] = useState<MedicationRecord | null>(null);
   const dosageRef = useRef<HTMLInputElement>(null);
+  const brandRef = useRef<HTMLInputElement>(null);
   const [confirming, setConfirming] = useState<null | (() => void)>(null);
   const [startDate, setStartDate] = useState(today);
   const [amount, setAmount] = useState(() => amountState());
@@ -232,9 +285,21 @@ export function CreateMedicationDialog({
     [fields.name, fields.dosage, fields.brand, medications],
   );
 
+  const match = useCatalogMatch(target?.name ?? fields.name, target?.dosage ?? fields.dosage, [fields.brand]);
+  const autoTags = target ? [] : (match?.tags ?? []);
+  const autoKey = `${match?.group?.id ?? ""}|${autoTags.join(",")}`;
+  const removed = removedAuto.key === autoKey ? removedAuto.tags : [];
+  // By hand comes last: it wins over the catalog among tags that exclude each other.
+  const tags = normalizeTags([...autoTags.filter((t) => !removed.includes(t)), ...manualTags]);
+  const onTags = (next: string[]) => {
+    setRemovedAuto({ key: autoKey, tags: autoTags.filter((t) => !next.includes(t)) });
+    setTags(next.filter((t) => !autoTags.includes(t)));
+  };
+
   const reset = () => {
     setFields(emptyFields);
     setTags([]);
+    setRemovedAuto({ key: "", tags: [] });
     setTarget(null);
     setTemplate(null);
     setConfirming(null);
@@ -285,6 +350,14 @@ export function CreateMedicationDialog({
       dosageRef.current?.focus();
       dosageRef.current?.select();
     });
+  };
+
+  /** A drug picked from the catalog: name and strength are settled, the manufacturer is next. */
+  const pickDrug = (drug: { name: string; strength: string }) => {
+    onFields({ name: drug.name, dosage: drug.strength });
+    setTemplate(null);
+    setError(null);
+    requestAnimationFrame(() => brandRef.current?.focus());
   };
 
   const savePack = (m: MedicationRecord) => {
@@ -341,13 +414,13 @@ export function CreateMedicationDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => (o ? onOpenChange(true) : close())}>
-      <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-2xl" onEscapeKeyDown={keepDialogForSuggestions}>
         <DialogHeader>
           <DialogTitle>{target ? "添加厂家 / 包装" : "新增药品"}</DialogTitle>
           <DialogDescription>
             {target
               ? "同一种药（同名、同规格）换了厂家或品牌：加为它的一个厂家，和原来的放在同一张卡片、共用服用规律；余量和储备按厂家分开记，先吃默认厂家的。"
-              : "一种药 = 一个名称 + 一个规格。输入名称时会自动查找已有的药，避免重复；同一种药不同厂家请加为厂家，不同规格另建。"}
+              : "一种药 = 一个名称 + 一个规格。输入名称时会自动匹配药品库，并查找已有的药避免重复；同一种药不同厂家请加为厂家，不同规格另建。"}
           </DialogDescription>
         </DialogHeader>
         {target ? (
@@ -366,7 +439,7 @@ export function CreateMedicationDialog({
               <span className="text-xs text-muted-foreground">已有：{packsText(target)}</span>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <PackInputs values={fields} onChange={onFields} brandRequired />
+              <PackInputs values={fields} onChange={onFields} brandRequired catalog={match} />
             </div>
             <FormError>{error}</FormError>
             <div className="flex flex-wrap justify-end gap-2">
@@ -409,15 +482,16 @@ export function CreateMedicationDialog({
               </div>
             )}
             <div className="grid gap-4 sm:grid-cols-2">
-              <NameInputs values={fields} onChange={onFields} dosageRef={dosageRef} />
+              <NameInputs values={fields} onChange={onFields} dosageRef={dosageRef} catalog={{ match, onPick: pickDrug }} />
+              <CatalogMatchNote match={match} nameDone={fields.dosage.trim() !== ""} onUseName={(name) => onFields({ name })} onPick={(c) => pickDrug({ name: c.name, strength: c.strength })} />
               <SimilarList matches={matches} template={template} onAddPack={startPack} onSupply={goSupply} onTemplate={fromTemplate} />
-              <PackInputs values={fields} onChange={onFields} />
+              <PackInputs values={fields} onChange={onFields} catalog={match} brandRef={brandRef} />
             </div>
             <div className="grid gap-2">
               <span className="text-sm font-medium">
-                标签 <span className="font-normal text-muted-foreground">（选填：精一 / 精二 / 麻醉、处方 / 非处方、医保等）</span>
+                标签 <span className="font-normal text-muted-foreground">（匹配到药品库会自动判断，可以删改；处方 / 非处方大多要自己选）</span>
               </span>
-              <TagPicker value={tags} onChange={setTags} />
+              <TagPicker value={tags} onChange={onTags} />
             </div>
             <Separator />
             <div className="@container grid gap-4">
@@ -503,6 +577,7 @@ export function EditMedicationForm({ medication, onDone }: { medication: Medicat
   const [fields, setFields] = useState({ name: medication.name, dosage: medication.dosage });
   const [tags, setTags] = useState(medication.tags);
   const { pending, error, setError, submit } = useActionForm();
+  const match = useCatalogMatch(fields.name, fields.dosage, medication.packs.map((p) => p.brand ?? ""));
   return (
     <form
       className="grid gap-3"
@@ -517,6 +592,7 @@ export function EditMedicationForm({ medication, onDone }: { medication: Medicat
       <div className="grid gap-4 sm:grid-cols-2">
         <NameInputs values={fields} onChange={(v) => setFields((f) => ({ ...f, ...v }))} />
       </div>
+      <CatalogTagSuggestion tags={tags} match={match} onApply={setTags} onUseName={(name) => setFields((f) => ({ ...f, name }))} />
       <div className="grid gap-2">
         <span className="text-sm font-medium">标签</span>
         <TagPicker value={tags} onChange={setTags} />
@@ -937,6 +1013,7 @@ function ReserveCountForm(props: ReserveFormProps) {
 function ReserveDrawForm({ pack, brand, today, onDone }: ReserveFormProps) {
   const [date, setDate] = useState(today);
   const [amount, setAmount] = useState(() => amountState("", pack.perBox));
+  const [source, setSource] = useState("");
   const { pending, error, setError, submit } = useActionForm();
   const uid = useId();
   const resolved = resolveAmount(amount, pack.packUnit);
@@ -947,7 +1024,7 @@ function ReserveDrawForm({ pack, brand, today, onDone }: ReserveFormProps) {
       onSubmit={(e) => {
         e.preventDefault();
         if ("error" in resolved) return setError(resolved.error);
-        const parsed = reserveEntrySchema.safeParse({ date, quantity: value });
+        const parsed = reserveDrawSchema.safeParse({ date, quantity: value, source });
         if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "输入无效");
         if (parsed.data.quantity > pack.reserve) return setError(`${brand}储备只有 ${fmtQty(pack.reserve)} 颗`);
         submit(
@@ -965,6 +1042,7 @@ function ReserveDrawForm({ pack, brand, today, onDone }: ReserveFormProps) {
           <DatePicker id={`${uid}-date`} label="取用日期" value={date} onChange={setDate} today={today} />
         </div>
         <SupplyAmountInput id={`${uid}-qty`} label={`取用数量（储备 ${fmtPacks(pack.reserve, pack.perBox, pack.packUnit)}）`} value={amount} onChange={setAmount} unit={pack.packUnit} />
+        <SourceInput id={`${uid}-source`} value={source} onChange={setSource} />
       </div>
       <p className="text-xs text-muted-foreground">
         取出的药记为 {fmtDate(date)} 的一笔{brand}补药、计入当前余量，{brand}储备同时减少

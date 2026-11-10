@@ -1,6 +1,6 @@
 "use client";
 
-import { ArchiveIcon, ChartSplineIcon, ClipboardListIcon, PillIcon, PlusIcon, SearchIcon, SettingsIcon, TagIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, ChartSplineIcon, ClipboardListIcon, DatabaseIcon, PillIcon, PlusIcon, SearchIcon, SettingsIcon, TagIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -29,6 +29,7 @@ import type { MedicationRecord } from "@/lib/meds/types";
 import { cn } from "@/lib/utils";
 import { daysFromToday } from "@/lib/meds/visits";
 import { BulkImportDialog } from "./bulk-import";
+import { CatalogMatchDialog } from "./catalog-match-dialog";
 import { DetailDialog } from "./detail-dialog";
 import { useHasImportDraft } from "./import-draft";
 import { AddSupplyDialog, CreateMedicationDialog, RegimenDialog, ReserveDialog, type ReserveTab } from "./medication-dialogs";
@@ -60,6 +61,7 @@ export function Board(data: MedsData) {
   const { clock, now, pauses, upcoming, statuses, intakes, taking, notTaking } = useMeds(data);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [matchingCatalog, setMatchingCatalog] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
   const [query, setQuery] = useState("");
   const [onlyNoPerBox, setOnlyNoPerBox] = useState(false);
@@ -161,6 +163,12 @@ export function Board(data: MedsData) {
             </Badge>
           )}
         </Button>
+        {medications.length > 0 && (
+          <Button variant="outline" onClick={() => setMatchingCatalog(true)}>
+            <DatabaseIcon />
+            匹配药品库
+          </Button>
+        )}
         <Button onClick={() => setCreating(true)}>
           <PlusIcon />
           新增药品
@@ -326,6 +334,7 @@ export function Board(data: MedsData) {
         onSupply={(id) => setPanel({ kind: "supply", id })}
       />
       <BulkImportDialog open={importing} onOpenChange={setImporting} medications={medications} statuses={statuses} now={now} />
+      <CatalogMatchDialog open={matchingCatalog} onOpenChange={setMatchingCatalog} medications={medications} />
       <AddSupplyDialog medication={open("supply")} onOpenChange={close} today={clock.date} pauses={pauses} visits={upcoming} {...strengths} />
       <RegimenDialog medication={open("regimen")} onOpenChange={close} today={clock.date} {...strengths} />
       <ReserveDialog

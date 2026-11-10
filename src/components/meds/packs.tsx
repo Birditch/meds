@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { fmtPacks, fmtQty, packShares, type MedicationStatus, type PackShare } from "@/lib/meds/format";
 import type { ActionResult, MedicationRecord, PackRecord, PackUnit } from "@/lib/meds/types";
 import { packSchema } from "@/lib/meds/validation";
+import { useCatalogMatch } from "./catalog-fields";
 import { FormError, SubmitButton, useActionForm } from "./forms";
 import { ConfirmDelete } from "./history";
 import { PackInputs } from "./medication-dialogs";
@@ -37,14 +38,18 @@ function PackForm({
   submitLabel,
   onSubmit,
   onDone,
+  catalogFor,
 }: {
   initial: Values;
   submitLabel: string;
   onSubmit: (fields: { brand: string; packUnit: PackUnit; perBox: number | null }) => Promise<ActionResult>;
   onDone: () => void;
+  /** Adding a manufacturer: suggest who makes this drug. */
+  catalogFor?: Pick<MedicationRecord, "name" | "dosage">;
 }) {
   const [values, setValues] = useState(initial);
   const { pending, error, setError, submit } = useActionForm();
+  const match = useCatalogMatch(catalogFor?.name ?? "", catalogFor?.dosage ?? "", [values.brand]);
   return (
     <form
       className="grid gap-3"
@@ -57,7 +62,7 @@ function PackForm({
       }}
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <PackInputs values={values} onChange={(v) => setValues((x) => ({ ...x, ...v }))} />
+        <PackInputs values={values} onChange={(v) => setValues((x) => ({ ...x, ...v }))} {...(catalogFor ? { catalog: match } : {})} />
       </div>
       <FormError>{error}</FormError>
       <div className="flex justify-end gap-2">
@@ -105,6 +110,7 @@ export function PacksPanel({ medication, status }: { medication: MedicationRecor
           <PackForm
             initial={{ ...valuesOf(), packUnit: medication.packUnit }}
             submitLabel="添加"
+            catalogFor={medication}
             onSubmit={(f) => addPack(medication.id, f)}
             onDone={() => setAdding(false)}
           />

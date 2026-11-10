@@ -1,0 +1,1 @@
+ALTER TABLE "supply_logs" ADD COLUMN "source" text;
