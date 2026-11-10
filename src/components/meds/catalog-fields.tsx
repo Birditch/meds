@@ -1,5 +1,6 @@
 "use client";
 
+import { PlusIcon } from "lucide-react";
 import { useEffect, useId, useState, type ReactNode, type Ref } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -75,7 +76,22 @@ interface ComboOption {
   key: string;
   content: ReactNode;
   pick: () => void;
+  /** Stays in view at the bottom of a long list. */
+  pinned?: boolean;
 }
+
+/** The way out when the catalog does not have it: keep what was typed. */
+const createOption = (typed: string, pick: () => void): ComboOption => ({
+  key: "create-own",
+  pinned: true,
+  pick,
+  content: (
+    <span className="flex items-center gap-1.5 font-medium">
+      <PlusIcon className="size-3.5 shrink-0" />
+      <span className="truncate">自己创建「{typed}」</span>
+    </span>
+  ),
+});
 
 /** Radix closes a dialog on Escape first; while a suggestion list is open, Escape only closes the list. */
 export function keepDialogForSuggestions(e: KeyboardEvent) {
@@ -111,6 +127,10 @@ function Combobox({
     setOpen(false);
     setActive(-1);
   };
+  const move = (next: number) => {
+    setActive(next);
+    document.getElementById(`${listId}-${next}`)?.scrollIntoView({ block: "nearest" });
+  };
   return (
     <div className="relative">
       <Input
@@ -137,10 +157,10 @@ function Combobox({
           if (e.nativeEvent.isComposing || !show) return;
           if (e.key === "ArrowDown") {
             e.preventDefault();
-            setActive((a) => Math.min(a + 1, options.length - 1));
+            move(Math.min(active + 1, options.length - 1));
           } else if (e.key === "ArrowUp") {
             e.preventDefault();
-            setActive((a) => Math.max(a - 1, 0));
+            move(Math.max(active - 1, 0));
           } else if (e.key === "Enter") {
             // With the list open, Enter chooses; it never submits a half-filled form.
             e.preventDefault();
@@ -155,7 +175,7 @@ function Combobox({
         <ul
           id={listId}
           role="listbox"
-          className={cn("absolute left-0 z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md", wide && "sm:w-[calc(200%+1rem)]")}
+          className={cn("absolute left-0 z-50 mt-1 max-h-64 w-full scroll-pb-10 overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md", wide && "sm:w-[calc(200%+1rem)]")}
         >
           {options.map((o, i) => (
             <li
@@ -166,7 +186,7 @@ function Combobox({
               // Keeps the focus in the input, so the blur does not close the list before the click lands.
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => choose(o)}
-              className={cn("cursor-pointer rounded-sm px-2 py-1.5 text-sm hover:bg-accent", i === active && "bg-accent")}
+              className={cn("cursor-pointer rounded-sm px-2 py-1.5 text-sm hover:bg-accent", o.pinned && "sticky bottom-0 bg-popover", o.pinned && i > 0 && "border-t", i === active && "bg-accent")}
             >
               {o.content}
             </li>
@@ -178,9 +198,24 @@ function Combobox({
 }
 
 /** The drug name: suggests from the catalog while typing. Picking one fills the name and strength. */
-export function CatalogNameInput({ id, value, onChange, onPick }: { id: string; value: string; onChange: (name: string) => void; onPick: (drug: { name: string; strength: string }) => void }) {
+export function CatalogNameInput({
+  id,
+  value,
+  onChange,
+  onPick,
+  onCreate,
+}: {
+  id: string;
+  value: string;
+  onChange: (name: string) => void;
+  onPick: (drug: { name: string; strength: string }) => void;
+  /** The typed name is not in the catalog and is to be kept as it is. */
+  onCreate: () => void;
+}) {
   const result = useCatalogSearch(value);
-  const options = (result?.groups ?? []).map((g) => ({
+  const typed = value.trim();
+  const groups = result?.groups ?? [];
+  const options: ComboOption[] = groups.map((g) => ({
     key: String(g.id),
     pick: () => onPick(g),
     content: (
@@ -198,6 +233,7 @@ export function CatalogNameInput({ id, value, onChange, onPick }: { id: string; 
       </>
     ),
   }));
+  if (result && typed && !groups.some((g) => g.name === typed)) options.push(createOption(typed, onCreate));
   return <Combobox id={id} wide required value={value} onChange={onChange} options={options} placeholder="输入药名、商品名、拼音或厂家，自动匹配" />;
 }
 
@@ -277,9 +313,11 @@ export function CatalogMakerInput({
   required?: boolean;
   inputRef?: Ref<HTMLInputElement>;
 }) {
-  const typed = value.normalize("NFKC").trim().toLowerCase();
-  const options = makerOptions(match?.makers ?? [])
-    .filter((o) => o.label !== value.trim() && o.label.normalize("NFKC").toLowerCase().includes(typed))
+  const trimmed = value.trim();
+  const typed = trimmed.normalize("NFKC").toLowerCase();
+  const known = makerOptions(match?.makers ?? []);
+  const options: ComboOption[] = known
+    .filter((o) => o.label !== trimmed && (o.matched || o.label.normalize("NFKC").toLowerCase().includes(typed)))
     .map((o) => ({
       key: o.label,
       pick: () => onPick(o.label, o.packs.length === 1 ? packPatch(o.packs[0]) : null),
@@ -295,6 +333,7 @@ export function CatalogMakerInput({
         </>
       ),
     }));
+  if (match && trimmed && !known.some((o) => o.label === trimmed)) options.push(createOption(trimmed, () => onChange(trimmed)));
   return <Combobox id={id} required={required} inputRef={inputRef} value={value} onChange={onChange} options={options} placeholder="如：江苏恩华" />;
 }
 
@@ -318,6 +357,34 @@ export function CatalogPackChips({ match, value, onPick }: { match: CatalogMatch
   );
 }
 
+const NoMatch = () => <p className="text-xs text-muted-foreground sm:col-span-2">药品库里没有匹配到这个名称，会按你填的保存。</p>;
+
+function NameFix({ match, onUseName }: { match: CatalogMatch; onUseName: (name: string) => void }) {
+  const name = match.suggestedName;
+  if (!name) return null;
+  return (
+    <p className="flex flex-wrap items-center gap-2">
+      {match.nameBasis === "typo" ? `名称可能写错了，药品库里是「${name}」` : `药品库里的全名是「${name}」`}
+      <Button type="button" size="xs" variant="outline" className="text-foreground" onClick={() => onUseName(name)}>
+        改成这个
+      </Button>
+    </p>
+  );
+}
+
+function CandidateChips({ candidates, onPick }: { candidates: readonly MatchCandidate[]; onPick: (drug: MatchCandidate) => void }) {
+  if (candidates.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {candidates.map((c) => (
+        <Button key={c.id} type="button" size="xs" variant="outline" onClick={() => onPick(c)}>
+          {c.name} {c.strength}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 /** How the name and strength as filled in relate to the catalog. */
 export function CatalogMatchNote({
   match,
@@ -332,7 +399,7 @@ export function CatalogMatchNote({
   onPick: (drug: MatchCandidate) => void;
 }) {
   if (!match) return null;
-  if (match.status === "none") return nameDone ? <p className="text-xs text-muted-foreground sm:col-span-2">药品库里没有匹配到这个名称，按你填的保存也可以。</p> : null;
+  if (match.status === "none") return nameDone ? <NoMatch /> : null;
   const maker = makerOptions(match.makers).filter((o) => o.matched);
   return (
     <div
@@ -350,23 +417,8 @@ export function CatalogMatchNote({
       ) : (
         <p>药品库里有这些，点一下选中：</p>
       )}
-      {match.suggestedName && (
-        <p className="flex flex-wrap items-center gap-2">
-          {match.nameBasis === "typo" ? `名称可能写错了，药品库里是「${match.suggestedName}」` : `药品库里的全名是「${match.suggestedName}」`}
-          <Button type="button" size="xs" variant="outline" className="text-foreground" onClick={() => onUseName(match.suggestedName!)}>
-            改成这个
-          </Button>
-        </p>
-      )}
-      {match.candidates.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {match.candidates.map((c) => (
-            <Button key={c.id} type="button" size="xs" variant="outline" onClick={() => onPick(c)}>
-              {c.name} {c.strength}
-            </Button>
-          ))}
-        </div>
-      )}
+      <NameFix match={match} onUseName={onUseName} />
+      <CandidateChips candidates={match.candidates} onPick={onPick} />
     </div>
   );
 }
@@ -395,33 +447,34 @@ export function TagChanges({ additions, conflicts }: { additions: readonly strin
 export function CatalogTagSuggestion({
   tags,
   match,
+  nameDone,
   onApply,
   onUseName,
+  onPick,
 }: {
   tags: readonly string[];
   match: CatalogMatch | null;
+  /** Long enough that "not found" is an answer and not a word half typed. */
+  nameDone: boolean;
   onApply: (tags: string[]) => void;
   onUseName: (name: string) => void;
+  onPick: (drug: MatchCandidate) => void;
 }) {
-  if (!match || match.status === "none") return null;
+  if (!match) return null;
+  if (match.status === "none") return nameDone ? <NoMatch /> : null;
   const p = proposeTags(tags, match.tags);
   const hasChanges = p.additions.length > 0 || p.conflicts.length > 0;
-  if (!hasChanges && !match.suggestedName) return null;
   return (
     <div className="grid gap-1.5 rounded-lg border bg-muted/30 px-3 py-2 text-sm" aria-live="polite">
-      {match.group && (
+      {match.group ? (
         <p>
           已匹配药品库：<b>{match.group.name} {match.group.strength}</b>
         </p>
+      ) : (
+        <p>药品库里有这些，点一下选中：</p>
       )}
-      {match.suggestedName && (
-        <p className="flex flex-wrap items-center gap-2">
-          {match.nameBasis === "typo" ? `名称可能写错了，药品库里是「${match.suggestedName}」` : `药品库里的全名是「${match.suggestedName}」`}
-          <Button type="button" size="xs" variant="outline" onClick={() => onUseName(match.suggestedName!)}>
-            改成这个
-          </Button>
-        </p>
-      )}
+      <NameFix match={match} onUseName={onUseName} />
+      <CandidateChips candidates={match.candidates} onPick={onPick} />
       {hasChanges && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <TagChanges additions={p.additions} conflicts={p.conflicts} />

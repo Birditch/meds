@@ -30,8 +30,8 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   allowing for a mistyped character, a missing form, 200mg for 0.2g, a bare 40 for 40mg, and short manufacturer
   names. A match brings the pack sizes and the tags the record establishes: 医保甲 / 乙, 国谈, 进口 / 国产 (from
   the approval number), 中成药 / 生物制品, 抗菌药, 注射 / 外用, and 麻醉 / 精一 / 精二 from the 2025 lists (those
-  also imply 处方药). Everything stays editable. The source has no 处方药 / 非处方药 column, so other drugs are
-  left for you to mark. **匹配药品库** on the board checks every existing medication; nothing changes until you
+  also imply 处方药). Everything stays editable, and 自己创建 keeps what you typed when the list has nothing for it.
+  The source has no 处方药 / 非处方药 column, so other drugs are left for you to mark. **匹配药品库** on the board checks every existing medication; nothing changes until you
   accept it, and 全部采用 only adds tags, never replaces one you set.
 - **Tags (标签)**: a catalog of the categories a prescription depends on — 麻醉药品 / 第一类 / 第二类精神药品,
   医疗用毒性 / 放射性 / 易制毒 / 含兴奋剂, 处方药 / 非处方药 (甲类 / 乙类), 医保甲 / 乙类 / 自费 / 门诊慢特病,

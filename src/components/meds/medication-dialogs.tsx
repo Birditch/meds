@@ -74,7 +74,13 @@ function NameInputs({
       <div className="grid gap-2">
         <Label htmlFor={`${uid}-name`}>药品名称</Label>
         {catalog ? (
-          <CatalogNameInput id={`${uid}-name`} value={values.name} onChange={(name) => onChange({ name })} onPick={catalog.onPick} />
+          <CatalogNameInput
+            id={`${uid}-name`}
+            value={values.name}
+            onChange={(name) => onChange({ name })}
+            onPick={catalog.onPick}
+            onCreate={() => document.getElementById(`${uid}-dosage`)?.focus()}
+          />
         ) : (
           <Input
             id={`${uid}-name`}
@@ -578,6 +584,7 @@ export function EditMedicationForm({ medication, onDone }: { medication: Medicat
   const [tags, setTags] = useState(medication.tags);
   const { pending, error, setError, submit } = useActionForm();
   const match = useCatalogMatch(fields.name, fields.dosage, medication.packs.map((p) => p.brand ?? ""));
+  const pickDrug = (drug: { name: string; strength: string }) => setFields({ name: drug.name, dosage: drug.strength });
   return (
     <form
       className="grid gap-3"
@@ -590,9 +597,16 @@ export function EditMedicationForm({ medication, onDone }: { medication: Medicat
       }}
     >
       <div className="grid gap-4 sm:grid-cols-2">
-        <NameInputs values={fields} onChange={(v) => setFields((f) => ({ ...f, ...v }))} />
+        <NameInputs values={fields} onChange={(v) => setFields((f) => ({ ...f, ...v }))} catalog={{ match, onPick: pickDrug }} />
       </div>
-      <CatalogTagSuggestion tags={tags} match={match} onApply={setTags} onUseName={(name) => setFields((f) => ({ ...f, name }))} />
+      <CatalogTagSuggestion
+        tags={tags}
+        match={match}
+        nameDone={fields.name.trim().length >= 3}
+        onApply={setTags}
+        onUseName={(name) => setFields((f) => ({ ...f, name }))}
+        onPick={(c) => pickDrug({ name: c.name, strength: c.strength })}
+      />
       <div className="grid gap-2">
         <span className="text-sm font-medium">标签</span>
         <TagPicker value={tags} onChange={setTags} />

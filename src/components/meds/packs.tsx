@@ -44,7 +44,7 @@ function PackForm({
   submitLabel: string;
   onSubmit: (fields: { brand: string; packUnit: PackUnit; perBox: number | null }) => Promise<ActionResult>;
   onDone: () => void;
-  /** Adding a manufacturer: suggest who makes this drug. */
+  /** Suggest who makes this drug. */
   catalogFor?: Pick<MedicationRecord, "name" | "dosage">;
 }) {
   const [values, setValues] = useState(initial);
@@ -120,7 +120,7 @@ export function PacksPanel({ medication, status }: { medication: MedicationRecor
         {packs.map((p, i) =>
           editing === p.id ? (
             <li key={p.id} className="bg-muted/30 p-3">
-              <PackForm initial={valuesOf(p)} submitLabel="保存" onSubmit={(f) => updatePack(p.id, f)} onDone={() => setEditing(null)} />
+              <PackForm initial={valuesOf(p)} submitLabel="保存" catalogFor={medication} onSubmit={(f) => updatePack(p.id, f)} onDone={() => setEditing(null)} />
             </li>
           ) : (
             <li key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
