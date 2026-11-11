@@ -230,6 +230,9 @@ export interface MedicationStatus<R extends RegimenInput = RegimenInput> {
   plan: VisitPlan;
 }
 
+/** False with no supply, regimen or count recorded (e.g. kept only in the reserve): nothing to say about 能吃到. */
+export const hasRecords = (s: Pick<MedicationStatus, "sim">) => s.sim.outcome.kind !== "empty";
+
 export interface StatusOptions {
   /** Hospital stays: nothing is taken from home stock. */
   pauses?: readonly DateRange[];

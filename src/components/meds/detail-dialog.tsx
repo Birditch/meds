@@ -14,6 +14,7 @@ import {
   describeShortfall,
   fmtQty,
   formatRegimen,
+  hasRecords,
   packNote,
   packShares,
   type MedicationStatus,
@@ -133,7 +134,7 @@ export function DetailDialog({
               </div>
             )}
 
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className={`grid gap-3 sm:grid-cols-2 ${hasRecords(status) ? "lg:grid-cols-5" : "lg:grid-cols-3"}`}>
               <Stat
                 label="当前剩余"
                 sub={
@@ -176,19 +177,21 @@ export function DetailDialog({
                   {describeReserve(medication.reserve, status.current)}
                 </div>
               </div>
-              <div className="grid content-start gap-1 rounded-lg border p-3 sm:col-span-2">
-                <span className="text-xs text-muted-foreground">能吃到（最后一个早中晚都吃满的日子）</span>
-                <div className="flex flex-wrap items-center gap-2">
-                  <StatusBadge conclusion={status.conclusion} />
-                  {status.conclusion.detail && (
-                    <span className={`text-xs ${toneText[status.conclusion.tone]}`}>{status.conclusion.detail}</span>
+              {hasRecords(status) && (
+                <div className="grid content-start gap-1 rounded-lg border p-3 sm:col-span-2">
+                  <span className="text-xs text-muted-foreground">能吃到（最后一个早中晚都吃满的日子）</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge conclusion={status.conclusion} />
+                    {status.conclusion.detail && (
+                      <span className={`text-xs ${toneText[status.conclusion.tone]}`}>{status.conclusion.detail}</span>
+                    )}
+                  </div>
+                  <div className="text-sm font-medium">{status.conclusion.headline}</div>
+                  {status.conclusion.extraNote && (
+                    <div className="text-xs text-muted-foreground">{status.conclusion.extraNote}</div>
                   )}
                 </div>
-                <div className="text-sm font-medium">{status.conclusion.headline}</div>
-                {status.conclusion.extraNote && (
-                  <div className="text-xs text-muted-foreground">{status.conclusion.extraNote}</div>
-                )}
-              </div>
+              )}
             </div>
 
             {panel === "reserve" && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { intakeAt, intakeLabel, isTaking, startsTaking } from "./format";
+import { hasRecords, intakeAt, intakeLabel, isTaking, medicationStatus, startsTaking } from "./format";
 
 const reg = (effectiveFrom: string, morning: number, noon: number, evening: number) => ({ effectiveFrom, morning, noon, evening });
 const TODAY = "2026-11-07";
@@ -57,5 +57,21 @@ describe("startsTaking: the moment to offer pills from the reserve", () => {
   it("reads an edit or a same-day overwrite as replacing that regimen", () => {
     expect(startsTaking([stop], reg("2026-11-01", 1, 0, 0), TODAY, stop.id)).toBe(true);
     expect(startsTaking([stop], reg("2026-11-01", 1, 0, 0), TODAY)).toBe(true);
+  });
+});
+
+describe("hasRecords: whether 能吃到 is shown", () => {
+  const now = { date: TODAY, slotsDone: 0 as const };
+
+  it("is false with nothing recorded, e.g. a medication kept only in the reserve", () => {
+    const s = medicationStatus([], [], now);
+    expect(s.conclusion.badge).toBe("暂无记录");
+    expect(hasRecords(s)).toBe(false);
+  });
+
+  it("is true once there is a supply, a regimen or a count", () => {
+    expect(hasRecords(medicationStatus([{ date: TODAY, quantity: 10 }], [], now))).toBe(true);
+    expect(hasRecords(medicationStatus([], [reg("2026-11-01", 1, 0, 0)], now))).toBe(true);
+    expect(hasRecords(medicationStatus([], [], now, [], { counts: [{ date: TODAY, slotsDone: 0, quantity: 5 }] }))).toBe(true);
   });
 });

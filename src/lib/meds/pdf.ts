@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import PDFDocument from "pdfkit";
 import { fmtDate, weekdayCN } from "./dates";
-import { COUNT_MOMENT_LABEL, fmtQty, formatRegimen, formatRegimenShort, intakeLabel, packNote } from "./format";
+import { COUNT_MOMENT_LABEL, fmtQty, formatRegimen, formatRegimenShort, hasRecords, intakeLabel, packNote } from "./format";
 import {
   countLines,
   gapWarning,
@@ -431,7 +431,7 @@ export async function renderStockPdf(r: StockReport, ctx: RenderContext): Promis
     const m = it.medication;
     w.itemHeading(`${i + 1}. ${medicationLabel(m)}`, { text: `现有 ${fmtQty(it.status.balanceNow)} 颗` });
     if (m.packs.length > 1) w.field("厂家/包装", packsText(m));
-    w.field("现有药", headline(it));
+    if (hasRecords(it.status)) w.field("现有药", headline(it));
     const byPack = packBreakdown(it, "stock");
     if (byPack) w.field("各厂家现有", byPack);
     const bought = purchaseLines(m, today);

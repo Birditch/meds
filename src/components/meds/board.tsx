@@ -14,6 +14,7 @@ import {
   describeShortfall,
   fmtQty,
   formatRegimen,
+  hasRecords,
   intakeLabel,
   isTaking,
   packNote,
@@ -454,14 +455,16 @@ function MedicationCard({
             )}
           </Row>
         )}
-        <div className="grid gap-1.5 rounded-lg bg-muted/50 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-muted-foreground">能吃到</span>
-            <StatusBadge conclusion={conclusion} />
+        {hasRecords(status) && (
+          <div className="grid gap-1.5 rounded-lg bg-muted/50 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">能吃到</span>
+              <StatusBadge conclusion={conclusion} />
+            </div>
+            {conclusion.detail && <p className={`text-right text-xs ${toneText[conclusion.tone]}`}>{conclusion.detail}</p>}
+            {conclusion.extraNote && <p className="text-right text-xs text-muted-foreground">{conclusion.extraNote}</p>}
           </div>
-          {conclusion.detail && <p className={`text-right text-xs ${toneText[conclusion.tone]}`}>{conclusion.detail}</p>}
-          {conclusion.extraNote && <p className="text-right text-xs text-muted-foreground">{conclusion.extraNote}</p>}
-        </div>
+        )}
         <Row label="药物储备">
           <span>{fmtQty(medication.reserve)} 颗</span>
           {multi ? <PackAmounts shares={shares} of="reserve" /> : reserveNote && <span className="text-xs text-muted-foreground">{reserveNote}</span>}
