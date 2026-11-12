@@ -2,7 +2,7 @@ import { z } from "zod";
 import { isValidISODate } from "./dates";
 import { normalizeTags } from "./tags";
 import { SLOTS } from "./simulate";
-import { MISSED_DOSE_KEPT, PACK_UNITS, RESERVE_TAKE_TIMES, RESERVE_USE_REASONS } from "./types";
+import { MISSED_DOSE_KEPT, PACK_UNITS, RESERVE_USE_REASONS } from "./types";
 
 const isHalfStep = (n: number) => Number.isInteger(n * 2);
 
@@ -109,18 +109,23 @@ const noteSchema = text("备注", 200)
   .transform((v) => v || null);
 
 /**
- * Pills that left a reserve straight on a day: why, when in the day for 已服用 (kept for nothing
- * else), and anything written down (其他 needs it).
+ * Pills that left a reserve straight on a day: why, and anything written down (其他 needs it). For
+ * 已服用 also the dose they were taken at (早 / 中 / 晚) and whether it was the regimen's dose
+ * (`regular`); both are dropped for any other reason.
  */
 export const reserveUseSchema = reserveEntrySchema
   .extend({
     reason: z.enum(RESERVE_USE_REASONS, { error: "请选择消耗原因" }),
-    timeOfDay: z.enum(RESERVE_TAKE_TIMES).nullish(),
+    timeOfDay: z.enum(SLOTS).nullish(),
+    regular: z.boolean().nullish(),
     note: noteSchema,
   })
-  .refine((u) => u.reason !== "taken" || u.timeOfDay, { message: "请选择什么时候吃的", path: ["timeOfDay"] })
+  .refine((u) => u.reason !== "taken" || u.timeOfDay, { message: "请选择哪一顿吃的", path: ["timeOfDay"] })
   .refine((u) => u.reason !== "other" || u.note, { message: "选了“其他”，请在备注里写明原因", path: ["note"] })
-  .transform((u) => ({ ...u, timeOfDay: u.reason === "taken" ? (u.timeOfDay ?? null) : null }));
+  .transform((u) => {
+    const taken = u.reason === "taken";
+    return { ...u, timeOfDay: taken ? (u.timeOfDay ?? null) : null, regular: taken && !!u.regular };
+  });
 
 /** 漏服: (part of) a dose not taken, and where its pills went (`packId`: whose reserve, when there). */
 export const missedDoseSchema = z.object({

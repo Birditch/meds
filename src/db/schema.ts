@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, date, index, integer, numeric, pgTable, smallint, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { boolean, check, date, index, integer, numeric, pgTable, smallint, text, timestamp, unique } from "drizzle-orm/pg-core";
 
 /** Quantities are 0.5-pill granular: q * 2 must be a whole number. */
 const halfStep = (column: string) => sql.raw(`${column} * 2 = trunc(${column} * 2)`);
@@ -117,7 +117,8 @@ export const stockCounts = pgTable(
 /**
  * Every change to a pack's reserve since this table exists: the number itself stays on the pack.
  * `delta` is what the entry did to the reserve, so undoing one takes it back. A draw is linked
- * to the supply it became, a transfer to the stock count that took the pills out of the stock.
+ * to the supply it became; a transfer takes its pills out of the stock at `slotsDone` (older ones
+ * are linked to the stock count of what stayed).
  */
 export const reserveLogs = pgTable(
   "reserve_logs",
@@ -140,9 +141,15 @@ export const reserveLogs = pgTable(
     supplyLogId: integer().references(() => supplyLogs.id, { onDelete: "set null" }),
     stockCountId: integer().references(() => stockCounts.id, { onDelete: "set null" }),
     missedDoseId: integer().references(() => missedDoses.id, { onDelete: "set null" }),
-    /** A use: why the pills left the reserve (RESERVE_USE_REASONS), when (RESERVE_TAKE_TIMES) for 已服用, anything written down. */
+    /**
+     * A use: why the pills left the reserve (RESERVE_USE_REASONS); for 已服用 the dose they were
+     * taken at (早 / 中 / 晚) and whether it was the regimen's dose (`regular`: the stock keeps it).
+     */
     reason: text({ enum: ["taken", "carry", "discarded", "lost", "given", "other"] }),
-    timeOfDay: text({ enum: ["morning", "noon", "evening", "bedtime"] }),
+    timeOfDay: text({ enum: ["morning", "noon", "evening"] }),
+    regular: boolean().notNull().default(false),
+    /** A transfer: how many of that day's doses were behind it; the pills leave the stock then. */
+    slotsDone: smallint(),
     note: text(),
     createdAt: timestamp({ withTimezone: true, mode: "date" }).notNull().defaultNow(),
   },
@@ -155,8 +162,10 @@ export const reserveLogs = pgTable(
     ),
     check(
       "reserve_logs_time_of_day",
-      sql`${t.timeOfDay} is null or (${t.reason} = 'taken' and ${t.timeOfDay} in ('morning', 'noon', 'evening', 'bedtime'))`,
+      sql`${t.timeOfDay} is null or (${t.reason} = 'taken' and ${t.timeOfDay} in ('morning', 'noon', 'evening'))`,
     ),
+    check("reserve_logs_regular", sql`not ${t.regular} or ${t.timeOfDay} is not null`),
+    check("reserve_logs_slots_done", sql`${t.slotsDone} is null or (${t.kind} = 'transfer' and ${t.slotsDone} between 0 and 3)`),
     check("reserve_logs_delta_non_zero", sql`${t.delta} <> 0`),
     check("reserve_logs_delta_half_step", halfStep("delta")),
   ],

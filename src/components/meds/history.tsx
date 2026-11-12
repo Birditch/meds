@@ -18,8 +18,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { addDays, fmtDate, type ISODate } from "@/lib/meds/dates";
-import { COUNT_MOMENT_LABEL, RESERVE_TAKE_TIME_LABEL, RESERVE_USE_REASON, SLOT_NAME, fmtQty, formatRegimen, intakeAt, isTaking, packNote } from "@/lib/meds/format";
-import { regimenAt, type DateRange } from "@/lib/meds/simulate";
+import { COUNT_MOMENT_LABEL, RESERVE_USE_REASON, fmtQty, formatRegimen, intakeAt, isTaking, packNote } from "@/lib/meds/format";
+import { SLOT_NAME, regimenAt, type DateRange } from "@/lib/meds/simulate";
 import type { ActionResult, CountRecord, MedicationRecord, MissedDoseRecord, ReserveLogKind, ReserveLogRecord, SupplyRecord } from "@/lib/meds/types";
 import { RegimenForm, SupplyForm } from "./forms";
 import { ModeTabs, ReserveForms } from "./medication-dialogs";
@@ -241,7 +241,7 @@ const RESERVE_LOG_LABEL: Record<ReserveLogKind, string> = {
 };
 
 /** What undoing an entry will do. */
-function undoEffect({ kind, delta }: ReserveLogRecord): string {
+function undoEffect({ kind, delta, regular, timeOfDay }: ReserveLogRecord): string {
   const pills = fmtQty(Math.abs(delta));
   switch (kind) {
     case "restock":
@@ -253,7 +253,7 @@ function undoEffect({ kind, delta }: ReserveLogRecord): string {
     case "transfer":
       return `${pills} 颗从储备退回当前余量。`;
     case "use":
-      return `${pills} 颗退回储备。`;
+      return regular && timeOfDay ? `${pills} 颗退回储备，${SLOT_NAME[timeOfDay]}这一顿重新从当前余量扣。` : `${pills} 颗退回储备。`;
     case "missed":
       return `储备减少 ${pills} 颗，对应的漏服记录一起删除：那一顿按已经吃了算。`;
   }
@@ -305,7 +305,12 @@ export function ReserveHistory({ medication, today }: { medication: MedicationRe
                 <span className="tabular-nums">{fmtDate(r.date)}</span>
                 <Badge variant="secondary">{RESERVE_LOG_LABEL[r.kind]}</Badge>
                 {r.reason && <Badge variant="outline">{RESERVE_USE_REASON[r.reason].label}</Badge>}
-                {r.timeOfDay && <span className="text-xs text-muted-foreground">{RESERVE_TAKE_TIME_LABEL[r.timeOfDay]}</span>}
+                {r.timeOfDay && (
+                  <span className="text-xs text-muted-foreground">
+                    {SLOT_NAME[r.timeOfDay]}
+                    {r.regular && "（按规律的这一顿）"}
+                  </span>
+                )}
                 {medication.packs.length > 1 && (
                   <span className="truncate text-xs text-muted-foreground">{medication.packs.find((p) => p.id === r.packId)?.brand ?? "未写厂家"}</span>
                 )}

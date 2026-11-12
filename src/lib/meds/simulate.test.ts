@@ -369,6 +369,41 @@ describe("missed doses kept in the stock", () => {
   });
 });
 
+describe("a dose taken from the reserve instead", () => {
+  it("takes that dose off nobody's stock, and says so apart from a missed one", () => {
+    const sim = simulate([sup("2026-11-06", 50)], [reg("2026-11-06", 2, 0, 1)], {
+      skips: [
+        { date: "2026-11-07", slot: "morning", quantity: 1, fromReserve: true },
+        { date: "2026-11-07", slot: "morning", quantity: 1 },
+        { date: "2026-11-07", slot: "evening", quantity: 1, fromReserve: true },
+      ],
+    });
+    expect(day(sim, "2026-11-07").slots[0]).toMatchObject({ status: "none", skipped: 2, fromReserve: 1 });
+    expect(day(sim, "2026-11-07").slots[2]).toMatchObject({ status: "none", skipped: 1, fromReserve: 1 });
+    expect(day(sim, "2026-11-07").endOfDayBalance).toBe(47);
+  });
+});
+
+describe("pills moved from the stock into the reserve", () => {
+  it("leave the stock at their moment, and only then", () => {
+    const sim = simulate([sup("2026-11-06", 50)], [reg("2026-11-06", 1, 0, 1)], {
+      withdrawals: [{ date: "2026-11-07", slotsDone: 1, quantity: 10 }],
+    });
+    // 48 after 11-06; 47 after 11-07 morning, 10 go, 36 after the evening.
+    expect(day(sim, "2026-11-07").slots[0].after).toBe(37);
+    expect(day(sim, "2026-11-07")).toMatchObject({ withdrawn: 10, endOfDayBalance: 36, count: null });
+    expect(day(sim, "2026-11-06")).not.toHaveProperty("withdrawn");
+  });
+
+  it("never takes more than the pack has, and comes after a count entered before it", () => {
+    const sim = simulate([sup("2026-11-06", 10)], [reg("2026-11-06", 1, 0, 0)], {
+      counts: [{ date: "2026-11-07", slotsDone: 1, quantity: 5, recordedAt: 1 }],
+      withdrawals: [{ date: "2026-11-07", slotsDone: 1, quantity: 8, recordedAt: 2 }],
+    });
+    expect(day(sim, "2026-11-07")).toMatchObject({ withdrawn: 5, endOfDayBalance: 0 });
+  });
+});
+
 describe("stock counts", () => {
   const count = (date: string, slotsDone: 0 | 1 | 2 | 3, quantity: number, recordedAt?: number) => ({
     date,

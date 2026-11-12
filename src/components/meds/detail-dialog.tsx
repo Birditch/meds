@@ -32,7 +32,6 @@ import { StockChart } from "./stock-chart";
 import { DialogStrengthTabs, type StrengthSwitch } from "./strength-tabs";
 import { TagBadges } from "./tags";
 
-const momentLabel = ["今日服药前", "早上服药后", "中午服药后", "晚上服药后"] as const;
 
 function Stat({ label, children, sub }: { label: React.ReactNode; children: React.ReactNode; sub?: React.ReactNode }) {
   return (
@@ -145,7 +144,7 @@ export function DetailDialog({
                     ) : (
                       packNote(status.balanceNow, medication) && <div>{packNote(status.balanceNow, medication)}</div>
                     )}
-                    {fmtDate(now.date)} · {momentLabel[now.slotsDone]}
+                    {fmtDate(now.date)} · {COUNT_MOMENT_LABEL[now.slotsDone]}
                     {lastCount && (
                       <div>
                         按 {fmtDate(lastCount.date)} {COUNT_MOMENT_LABEL[lastCount.slotsDone]}盘点

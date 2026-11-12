@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasRecords, intakeAt, intakeLabel, isTaking, medicationStatus, startsTaking } from "./format";
+import { COUNT_MOMENT_LABEL, doseClaims, hasRecords, intakeAt, intakeLabel, isTaking, medicationStatus, startsTaking } from "./format";
 
 const reg = (effectiveFrom: string, morning: number, noon: number, evening: number) => ({ effectiveFrom, morning, noon, evening });
 const TODAY = "2026-11-07";
@@ -73,5 +73,40 @@ describe("hasRecords: whether 能吃到 is shown", () => {
     expect(hasRecords(medicationStatus([{ date: TODAY, quantity: 10 }], [], now))).toBe(true);
     expect(hasRecords(medicationStatus([], [reg("2026-11-01", 1, 0, 0)], now))).toBe(true);
     expect(hasRecords(medicationStatus([], [], now, [], { counts: [{ date: TODAY, slotsDone: 0, quantity: 5 }] }))).toBe(true);
+  });
+});
+
+describe("one scheduled dose: what is recorded against it", () => {
+  const log = (date: string, timeOfDay: "morning" | "noon" | "evening", delta: number, regular: boolean) => ({
+    id: 1,
+    date,
+    kind: "use" as const,
+    delta,
+    packId: 1,
+    recordedAt: 0,
+    source: null,
+    timeOfDay,
+    regular,
+    slotsDone: null,
+    viaCount: false,
+    reason: "taken" as const,
+    note: null,
+    missedDoseId: null,
+  });
+  const m = {
+    regimens: [{ id: 1, effectiveFrom: "2026-11-01", morning: 0, noon: 0, evening: 4 }],
+    misses: [{ id: 1, date: "2026-11-12", slot: "evening" as const, quantity: 1, kept: "stock" as const, packId: null, recordedAt: 0 }],
+    reserveLogs: [log("2026-11-12", "evening", -2, true), log("2026-11-12", "evening", -5, false)],
+  };
+
+  it("counts what was missed and what came from the reserve in its place, not extra pills", () => {
+    expect(doseClaims(m, "2026-11-12", "evening")).toEqual({ scheduled: 4, missed: 1, fromReserve: 2, open: 1 });
+    expect(doseClaims(m, "2026-11-12", "morning")).toEqual({ scheduled: 0, missed: 0, fromReserve: 0, open: 0 });
+  });
+});
+
+describe("one name for each moment of the day", () => {
+  it("builds the count moments from the doses' names", () => {
+    expect(COUNT_MOMENT_LABEL).toEqual(["早上服药前", "早上服药后", "中午服药后", "晚上服药后"]);
   });
 });

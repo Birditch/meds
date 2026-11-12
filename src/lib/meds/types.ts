@@ -21,10 +21,6 @@ export interface SupplyRecord {
 export const RESERVE_LOG_KINDS = ["restock", "draw", "count", "transfer", "use", "missed"] as const;
 export type ReserveLogKind = (typeof RESERVE_LOG_KINDS)[number];
 
-/** When pills taken straight from the reserve (消耗储备 · 已服用) were taken; labels in format.ts. */
-export const RESERVE_TAKE_TIMES = ["morning", "noon", "evening", "bedtime"] as const;
-export type ReserveTakeTime = (typeof RESERVE_TAKE_TIMES)[number];
-
 /** Why pills left the reserve without entering the stock (消耗储备), 已服用 first; labels in format.ts. */
 export const RESERVE_USE_REASONS = ["taken", "carry", "discarded", "lost", "given", "other"] as const;
 export type ReserveUseReason = (typeof RESERVE_USE_REASONS)[number];
@@ -40,8 +36,14 @@ export interface ReserveLogRecord {
   recordedAt: number;
   /** A draw: where the pills came from, when recorded. */
   source: string | null;
-  /** A use for 已服用: when in the day the pills were taken. */
-  timeOfDay: ReserveTakeTime | null;
+  /** A use for 已服用: the dose (早 / 中 / 晚) they were taken at. */
+  timeOfDay: Slot | null;
+  /** A use for 已服用: it was that dose of the regimen, so the stock does not lose it. */
+  regular: boolean;
+  /** A transfer: how many of that day's doses were behind it (it takes the pills out of the stock then). */
+  slotsDone: 0 | 1 | 2 | 3 | null;
+  /** A transfer recorded as a stock count of what stayed (before 2026-11-13): the count already holds it. */
+  viaCount: boolean;
   /** A use: why the pills left the reserve. */
   reason: ReserveUseReason | null;
   /** A use: anything written down about it. */

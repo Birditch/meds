@@ -141,17 +141,24 @@ function buildTicks(min: number, max: number): number[] {
   return [...ticks, max];
 }
 
+/** "吃储备 1 颗、漏服 1 颗": why a dose took less from the stock. */
+function notFromStock(s: SlotOutcome): string {
+  const reserve = s.fromReserve ?? 0;
+  const missed = (s.skipped ?? 0) - reserve;
+  return [reserve > 0 && `吃储备 ${fmtQty(reserve)} 颗`, missed > 0 && `漏服 ${fmtQty(missed)} 颗`].filter(Boolean).join("、");
+}
+
 function SlotLine({ s }: { s: SlotOutcome }) {
   const label = SLOT_LABEL[s.slot];
   let text: string;
   let cls = "";
   switch (s.status) {
     case "none":
-      text = s.skipped ? `漏服 ${fmtQty(s.skipped)} 颗，留在当前` : "不服";
+      text = s.skipped ? `不扣：${notFromStock(s)}` : "不服";
       cls = "text-muted-foreground";
       break;
     case "full":
-      text = `−${fmtQty(s.taken)} → 剩 ${fmtQty(s.after)}${s.skipped ? `（漏服 ${fmtQty(s.skipped)} 颗留在当前）` : ""}`;
+      text = `−${fmtQty(s.taken)} → 剩 ${fmtQty(s.after)}${s.skipped ? `（${notFromStock(s)}）` : ""}`;
       break;
     case "partial":
       text = `仅 ${fmtQty(s.taken)}/${fmtQty(s.required)} → 剩 0（不足一顿）`;
@@ -185,10 +192,11 @@ function DayTooltip({ day }: { day: DaySnapshot }) {
           "当日尚无生效规律"
         )}
       </div>
-      {(day.supplied > 0 || day.regimenChanged || day.paused || day.count) && (
+      {(day.supplied > 0 || day.regimenChanged || day.paused || day.count || day.withdrawn) && (
         <div className="grid gap-0.5">
           {day.paused && <div>住院中：不消耗家里的药</div>}
           {day.supplied > 0 && <div>➕ 补药 +{fmtQty(day.supplied)} 颗</div>}
+          {day.withdrawn ? <div>↪ 转入储备 −{fmtQty(day.withdrawn)} 颗</div> : null}
           {day.count && (
             <div>
               📋 盘点（{COUNT_MOMENT_LABEL[day.count.slotsDone]}）：实际 {fmtQty(day.count.quantity)} 颗，按记录推算{" "}

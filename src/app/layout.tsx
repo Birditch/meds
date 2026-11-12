@@ -2,6 +2,7 @@ import { PillIcon } from "lucide-react";
 import type { Metadata, Viewport } from "next";
 import { ThemeProvider } from "next-themes";
 import Link from "next/link";
+import { LiveRefresh } from "@/components/live-refresh";
 import { SiteNav } from "@/components/meds/site-nav";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
@@ -47,6 +48,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             </a>
           </footer>
           <Toaster position="top-center" richColors />
+          <LiveRefresh />
         </ThemeProvider>
       </body>
     </html>

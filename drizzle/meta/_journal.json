@@ -78,6 +78,13 @@
       "when": 1794497605031,
       "tag": "0010_reserve_reasons_merged",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794527348522,
+      "tag": "0011_sync_slots_regular_transfer",
+      "breakpoints": true
     }
   ]
 }

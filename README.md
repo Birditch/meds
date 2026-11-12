@@ -78,14 +78,20 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   stock as one supply log of that manufacturer, with a required 药品来源 (where they came from) printed
   in the purchase records of the visit and stock PDFs, "消耗储备" records pills that left the
   reserve straight, on a chosen date (not later than today) and with a required reason: **已服用**
-  (taken; then also when in the day, 早上 / 中午 / 晚上 / 睡前, guessed from the clock), 带走
+  (taken; then also which dose, 早上 / 中午 / 晚上 — the regimen's own slots, guessed from the
+  clock with the same 08:00 / 12:00 / 18:00 rule as everywhere else), 带走
   (carried away or kept elsewhere), 丢弃 (expired, damaged), 遗失, 送人/退药, or 其他 (which needs
   a note; any reason can take one). The 服用 link on the card's 药物储备 row opens it with 已服用
-  picked; the card shows the latest one and 储备记录 how many were taken in the last 30 days. It
-  never touches the stock or the projection, and cannot take more than the reserve holds. "盘点储备" replaces the
-  number with a count, and "当前转入储备" moves pills back from the stock (recorded as a stock count
-  of what stays). Every change is listed under 储备记录 in the detail view, where 新增 offers
-  补进储备 and 消耗储备, and can be undone there.
+  picked; the card shows the latest one and 储备记录 how many were taken in the last 30 days. For
+  a medication being taken, 已服用 on a scheduled dose asks whether it was **按规律的这一顿** (that
+  dose came from the reserve instead of the stock: the stock does not go down for it, like a
+  missed dose kept in the stock, and the card shows 「吃储备」) or **规律之外多吃的** (extra, the
+  stock is untouched and the dose is still taken from it). Together with missed doses it can
+  never claim more than the dose. Otherwise 消耗储备 never touches the stock or the projection,
+  and cannot take more than the reserve holds. "盘点储备" replaces the number with a count, and
+  "当前转入储备" moves pills back from the stock at the moment entered (a withdrawal from the
+  stock, not a count, so undoing it leaves nothing behind). Every change is listed under 储备记录
+  in the detail view, where 新增 offers 补进储备 and 消耗储备, and can be undone there.
 - **Missed doses (漏服)** (记漏服 under the card's regimen, or 漏服记录 in the detail view): a day
   (not later than today), one of its scheduled slots (早 / 中 / 晚; none on a hospital day, each at
   most once), how many of its pills were not taken (the whole dose by default), and where they
@@ -143,12 +149,13 @@ earliest record with `balance = 0`, for each day `d`:
 1. **Supply** — add every `+N` logged on `d` (one entered after that day's count waits for it).
 2. **Regimen** — the latest regimen with `effectiveFrom <= d` (none yet → doses are 0). On a
    hospital-stay day every dose is 0.
-3. **Doses, 早 → 中 → 晚** — a missed dose kept in the stock takes its pills off that slot's dose
-   first; a slot with dose `0` is skipped; if `balance >= dose` it is taken in
+3. **Doses, 早 → 中 → 晚** — a missed dose kept in the stock, and a regular dose taken from the
+   reserve, take their pills off that slot's dose first; a slot with dose `0` is skipped; if `balance >= dose` it is taken in
    full; if `0 < balance < dose` the remainder is taken as a partial dose and `balance` becomes 0;
    if `balance == 0` the slot is missed. Stock never goes negative, and a later refill resumes it.
    A **count** replaces `balance` once its number of slots is behind (0 = before 早), then adds
-   the same-day supplies entered after it.
+   the same-day supplies entered after it. A **withdrawal** (当前转入储备) takes its pills off
+   that pack at the same kind of moment, in the order entered, never more than the pack has.
 4. **Snapshot** — end-of-day balance, each slot's outcome, refill / regimen-change / count events.
 
 Once every record, today and the end of the visit plan are behind it, the simulation stops when
@@ -166,7 +173,12 @@ when the pack size is known; stock never goes negative, so this never double-cou
 
 All dates and "now" are **Beijing time** (`Asia/Shanghai`, `APP_TIME_ZONE` in
 `src/lib/meds/dates.ts`) for every visitor and the server alike; a slot counts as taken from
-08:00 / 12:00 / 18:00.
+08:00 / 12:00 / 18:00. The day has these three doses only (早上 / 中午 / 晚上); every form that
+asks for a dose or a moment uses those names and that rule.
+
+An open page refreshes its data when it is looked at again (tab shown, window focused, back
+online) and every minute while in view, so a change made on another device shows up without a
+reload; open dialogs and what is typed in them stay as they are.
 
 ## Development
 

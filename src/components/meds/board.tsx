@@ -10,7 +10,6 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { fmtDate, type ISODate } from "@/lib/meds/dates";
 import {
-  RESERVE_TAKE_TIME_LABEL,
   describeReserve,
   describeShortfall,
   fmtQty,
@@ -25,7 +24,7 @@ import {
   type Tone,
 } from "@/lib/meds/format";
 import { searchMedications } from "@/lib/meds/search";
-import { SLOTS, SLOT_LABEL } from "@/lib/meds/simulate";
+import { SLOTS, SLOT_LABEL, SLOT_NAME } from "@/lib/meds/simulate";
 import { drugKey, groupStrengths, sortStrengths } from "@/lib/meds/similar";
 import { sortTags, tagLabel } from "@/lib/meds/tags";
 import type { MedicationRecord, ReserveUseReason } from "@/lib/meds/types";
@@ -428,7 +427,13 @@ function MedicationCard({
   const lastTake = medication.reserveLogs
     .filter((l) => l.reason === "taken")
     .reduce<MedicationRecord["reserveLogs"][number] | null>((a, l) => (!a || l.date > a.date || (l.date === a.date && l.recordedAt > a.recordedAt) ? l : a), null);
-  const missedToday = medication.misses.filter((x) => x.date === today).sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot));
+  // Today's doses not taken from the stock: missed, or taken from the reserve instead.
+  const notFromStock = [
+    ...medication.misses.filter((x) => x.date === today).map((x) => ({ slot: x.slot, text: `漏服 ${fmtQty(x.quantity)} 颗`, missed: true })),
+    ...medication.reserveLogs
+      .filter((l) => l.regular && l.date === today && l.timeOfDay)
+      .map((l) => ({ slot: l.timeOfDay!, text: `吃储备 ${fmtQty(-l.delta)} 颗`, missed: false })),
+  ].sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot));
   // The status box already says 已停药 / 未设规律: the badge adds when.
   const intakeNote =
     intake.kind === "starting" ? intakeLabel(intake) : intake.kind === "stopped" ? `${fmtDate(intake.since)} 起停药` : null;
@@ -470,9 +475,9 @@ function MedicationCard({
         {taking && (
           <Row label="当前规律">
             {formatRegimen(status.current)}
-            {missedToday.length > 0 && (
-              <span className="text-xs text-amber-700 dark:text-amber-400">
-                今天漏服：{missedToday.map((x) => `${SLOT_LABEL[x.slot]} ${fmtQty(x.quantity)} 颗`).join("、")}
+            {notFromStock.length > 0 && (
+              <span className={cn("text-xs", notFromStock.some((x) => x.missed) ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
+                今天：{notFromStock.map((x) => `${SLOT_LABEL[x.slot]} ${x.text}`).join("、")}
               </span>
             )}
             <button type="button" className="text-xs text-primary underline-offset-4 hover:underline" onClick={onMissed}>
@@ -509,7 +514,7 @@ function MedicationCard({
           )}
           {lastTake && (
             <span className="text-xs text-muted-foreground">
-              最近服用 {fmtDate(lastTake.date)} {lastTake.timeOfDay && RESERVE_TAKE_TIME_LABEL[lastTake.timeOfDay]} {fmtQty(-lastTake.delta)} 颗
+              最近服用 {fmtDate(lastTake.date)} {lastTake.timeOfDay && SLOT_NAME[lastTake.timeOfDay]} {fmtQty(-lastTake.delta)} 颗
             </span>
           )}
           {medication.reserve > 0 && (
@@ -549,7 +554,7 @@ function MedicationCard({
           <PlusIcon />
           {taking ? "补药" : "补进储备"}
         </Button>
-        <Button size="sm" variant="outline" onClick={onReserve} title="补进储备、服用、取用到当前、记录消耗、盘点或把当前余量转入储备">
+        <Button size="sm" variant="outline" onClick={onReserve} title="补进储备、取用到当前、消耗（含服用）、盘点或把当前余量转入储备">
           <ArchiveIcon />
           管理储备
         </Button>

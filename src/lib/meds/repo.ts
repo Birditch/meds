@@ -76,7 +76,7 @@ export async function listMedications(): Promise<MedicationRecord[]> {
     });
   }
   for (const l of logs) {
-    byId.get(l.medicationId)?.reserveLogs.push({ id: l.id, date: l.date, kind: l.kind, delta: l.delta, packId: l.packId, recordedAt: l.createdAt.getTime(), source: l.supplyLogId === null ? null : (sourceOf.get(l.supplyLogId) ?? null), timeOfDay: l.timeOfDay, reason: l.reason, note: l.note, missedDoseId: l.missedDoseId });
+    byId.get(l.medicationId)?.reserveLogs.push({ id: l.id, date: l.date, kind: l.kind, delta: l.delta, packId: l.packId, recordedAt: l.createdAt.getTime(), source: l.supplyLogId === null ? null : (sourceOf.get(l.supplyLogId) ?? null), timeOfDay: l.timeOfDay, regular: l.regular, slotsDone: l.slotsDone as 0 | 1 | 2 | 3 | null, viaCount: l.stockCountId !== null, reason: l.reason, note: l.note, missedDoseId: l.missedDoseId });
   }
   for (const x of misses) {
     byId.get(x.medicationId)?.misses.push({

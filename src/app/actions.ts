@@ -9,8 +9,8 @@ import { dosageRegimens, hospitalStays, medicationPacks, medications, missedDose
 import { checkAccess } from "@/lib/access";
 import { fmtDate, wallClock } from "@/lib/meds/dates";
 import { intakeAt, isTaking } from "@/lib/meds/format";
-import { SLOTS, SLOT_LABEL, dailyTotal, momentAt, packBalancesAt, regimenAt, simulate, type Moment } from "@/lib/meds/simulate";
-import type { ActionResult, ReserveLogKind, ReserveTakeTime, ReserveUseReason } from "@/lib/meds/types";
+import { SLOTS, SLOT_NAME, dailyTotal, momentAt, packBalancesAt, regimenAt, simulate, type Moment, type Slot } from "@/lib/meds/simulate";
+import type { ActionResult, ReserveLogKind, ReserveUseReason } from "@/lib/meds/types";
 import {
   catalogTagsSchema,
   createMedicationSchema,
@@ -116,7 +116,9 @@ async function changeReserve(
     supplyLogId?: number;
     stockCountId?: number;
     missedDoseId?: number;
-    timeOfDay?: ReserveTakeTime | null;
+    timeOfDay?: Slot | null;
+    regular?: boolean;
+    slotsDone?: number;
     reason?: ReserveUseReason;
     note?: string | null;
   },
@@ -151,16 +153,33 @@ async function undoReserveLog(tx: Tx, log: typeof reserveLogs.$inferSelect) {
   if (reserve < 0) throw new UserError(`储备现在只有 ${pack.reserve} 颗，不够撤销这条记录`);
   await tx.update(medicationPacks).set({ reserve }).where(eq(medicationPacks.id, pack.id));
   if (log.supplyLogId !== null) await tx.delete(supplyLogs).where(eq(supplyLogs.id, log.supplyLogId));
-  if (log.stockCountId !== null) {
-    await tx
-      .update(stockCounts)
-      .set({ quantity: sql`${stockCounts.quantity} + ${log.delta}` })
-      .where(eq(stockCounts.id, log.stockCountId));
-  }
   await tx.delete(reserveLogs).where(eq(reserveLogs.id, log.id));
+  if (log.stockCountId !== null) await giveBackToCount(tx, pack, log.stockCountId, log.delta);
   // A missed dose put into the reserve goes with it: that dose counts as taken again.
   if (log.missedDoseId !== null) await tx.delete(missedDoses).where(eq(missedDoses.id, log.missedDoseId));
   await syncPacks(tx, pack.medicationId);
+}
+
+/**
+ * Undoes a 当前转入储备 made before withdrawals existed, which wrote the stock left as a count.
+ * The pills go back onto that count; the count is then dropped when it says no more than the
+ * projection would without it (the transfer made it), so the undo leaves no 盘点 behind. One that
+ * still says something — a real count the transfer overwrote, or one another transfer shares — stays.
+ */
+async function giveBackToCount(tx: Tx, pack: Pack, countId: number, pills: number) {
+  const [count] = await tx.select().from(stockCounts).where(eq(stockCounts.id, countId));
+  if (!count) return;
+  const quantity = count.quantity + pills;
+  const shared = await tx.select({ id: reserveLogs.id }).from(reserveLogs).where(eq(reserveLogs.stockCountId, countId));
+  if (shared.length === 0) {
+    await tx.delete(stockCounts).where(eq(stockCounts.id, countId));
+    const at = { date: count.date, slotsDone: count.slotsDone as Moment["slotsDone"] };
+    if ((await stockOfPack(tx, pack, at)) === quantity) return;
+    const { medicationId, packId, date, slotsDone, createdAt } = count;
+    await tx.insert(stockCounts).values({ medicationId, packId, date, slotsDone, createdAt, quantity });
+    return;
+  }
+  await tx.update(stockCounts).set({ quantity }).where(eq(stockCounts.id, countId));
 }
 
 /** Only a medication being taken has a current stock to add to; anything else goes to the reserve. */
@@ -183,6 +202,7 @@ async function simulationOf(tx: Tx, medicationId: number, today: string) {
   const regimens = await tx.select().from(dosageRegimens).where(eq(dosageRegimens.medicationId, medicationId));
   const stays = await tx.select().from(hospitalStays);
   const misses = await tx.select().from(missedDoses).where(eq(missedDoses.medicationId, medicationId));
+  const logs = await tx.select().from(reserveLogs).where(eq(reserveLogs.medicationId, medicationId));
   const sim = simulate(
     supplies.map((s) => ({ ...s, recordedAt: s.createdAt.getTime() })),
     regimens,
@@ -191,10 +211,50 @@ async function simulationOf(tx: Tx, medicationId: number, today: string) {
       packs: order,
       counts: counts.map((c) => ({ ...c, slotsDone: c.slotsDone as Moment["slotsDone"], recordedAt: c.createdAt.getTime() })),
       pauses: stays.map((s) => ({ start: s.startDate, end: s.endDate })),
-      skips: misses.filter((x) => x.kept === "stock"),
+      skips: [
+        ...misses.filter((x) => x.kept === "stock"),
+        ...logs.flatMap((l) => (l.regular && l.timeOfDay ? [{ date: l.date, slot: l.timeOfDay, quantity: -l.delta, fromReserve: true }] : [])),
+      ],
+      withdrawals: logs.flatMap((l) =>
+        l.kind === "transfer" && l.stockCountId === null && l.slotsDone !== null
+          ? [{ date: l.date, slotsDone: l.slotsDone as Moment["slotsDone"], quantity: l.delta, recordedAt: l.createdAt.getTime(), packId: l.packId }]
+          : [],
+      ),
     },
   );
   return { sim, order, regimens };
+}
+
+/**
+ * How much of one scheduled dose is still open: not recorded as missed (漏服) nor as taken from the
+ * reserve in its place. Locks the medication, so two records cannot both claim the same pills.
+ */
+async function openDose(tx: Tx, medicationId: number, date: string, slot: Slot) {
+  const [med] = await tx.select({ id: medications.id }).from(medications).where(eq(medications.id, medicationId)).for("update");
+  if (!med) throw new UserError("药品不存在或已被删除");
+  const { sim, order, regimens } = await simulationOf(tx, medicationId, wallClock().date);
+  const at = `${fmtDate(date)} ${SLOT_NAME[slot]}`;
+  const day = sim.days.find((d) => d.date === date);
+  if (day?.paused) throw new UserError(`${fmtDate(date)}在住院，不吃家里的药`);
+  const scheduled = regimenAt(regimens, date)?.[slot] ?? 0;
+  if (scheduled <= 0) throw new UserError(`按规律${at}不用吃这种药`);
+  const sameDose = and(eq(missedDoses.medicationId, medicationId), eq(missedDoses.date, date), eq(missedDoses.slot, slot));
+  const missed = await tx.select({ quantity: missedDoses.quantity }).from(missedDoses).where(sameDose);
+  const covered = await tx
+    .select({ delta: reserveLogs.delta })
+    .from(reserveLogs)
+    .where(and(eq(reserveLogs.medicationId, medicationId), eq(reserveLogs.date, date), eq(reserveLogs.timeOfDay, slot), eq(reserveLogs.regular, true)));
+  const claimed = missed.reduce((n, x) => n + x.quantity, 0) - covered.reduce((n, l) => n + l.delta, 0);
+  /** Refuses more than is open, saying what the dose already has. */
+  const assertRoom = (quantity: number) => {
+    if (quantity <= scheduled - claimed) return;
+    throw new UserError(
+      claimed > 0
+        ? `按规律${at}吃 ${scheduled} 颗，已经记了 ${claimed} 颗（漏服或吃的储备），最多还能记 ${scheduled - claimed} 颗`
+        : `按规律${at}只吃 ${scheduled} 颗`,
+    );
+  };
+  return { sim, order, day, at, assertRoom };
 }
 
 /** A pack's current stock, from the same simulation the board shows. */
@@ -382,12 +442,18 @@ export async function drawFromReserve(packId: number, input: ReserveDrawFields):
 export async function recordReserveUse(packId: number, input: ReserveUseFields): Promise<ActionResult> {
   return run(async () => {
     const id = parse(idSchema, packId);
-    const { date, quantity, reason, timeOfDay, note } = parse(reserveUseSchema, input);
+    const { date, quantity, reason, timeOfDay, regular, note } = parse(reserveUseSchema, input);
     if (date > wallClock().date) throw new UserError("消耗日期不能晚于今天");
     await getDb().transaction(async (tx) => {
+      // The regimen's dose taken from the reserve: that dose must still be open (medication first, then pack).
+      if (regular && timeOfDay) {
+        const [owner] = await tx.select({ medicationId: medicationPacks.medicationId }).from(medicationPacks).where(eq(medicationPacks.id, id));
+        if (!owner) throw new UserError("这个厂家/包装不存在或已被删除，请刷新后重试");
+        (await openDose(tx, owner.medicationId, date, timeOfDay)).assertRoom(quantity);
+      }
       const pack = await lockPack(tx, id);
       if (pack.reserve < quantity) throw new UserError(`${pack.brand ?? "这个厂家"}的储备只剩 ${pack.reserve} 颗，不够扣`);
-      await changeReserve(tx, pack, { kind: "use", delta: -quantity, date, reason, timeOfDay, note });
+      await changeReserve(tx, pack, { kind: "use", delta: -quantity, date, reason, timeOfDay, regular, note });
     });
   });
 }
@@ -403,16 +469,8 @@ export async function transferToReserve(packId: number, quantity: number): Promi
       const pack = await lockPack(tx, id);
       const have = await stockOfPack(tx, pack, at);
       if (amount > have) throw new UserError(`当前余量只有 ${have} 颗，不够转入`);
-      const left = have - amount;
-      const [count] = await tx
-        .insert(stockCounts)
-        .values({ medicationId: pack.medicationId, packId: id, date: at.date, slotsDone: at.slotsDone, quantity: left })
-        .onConflictDoUpdate({
-          target: [stockCounts.medicationId, stockCounts.date, stockCounts.packId],
-          set: { slotsDone: at.slotsDone, quantity: left, createdAt: sql`now()` },
-        })
-        .returning({ id: stockCounts.id });
-      await changeReserve(tx, pack, { kind: "transfer", delta: amount, date: at.date, stockCountId: count.id });
+      // One entry that takes the pills out of the stock now: undoing it leaves nothing behind.
+      await changeReserve(tx, pack, { kind: "transfer", delta: amount, date: at.date, slotsDone: at.slotsDone });
     });
   });
 }
@@ -486,18 +544,10 @@ export async function recordMissedDose(medicationId: number, input: MissedDoseFi
   return run(async () => {
     const medId = parse(idSchema, medicationId);
     const { date, slot, quantity, kept, packId } = parse(missedDoseSchema, input);
-    const today = wallClock().date;
-    if (date > today) throw new UserError("漏服日期不能晚于今天");
+    if (date > wallClock().date) throw new UserError("漏服日期不能晚于今天");
     await getDb().transaction(async (tx) => {
-      const [med] = await tx.select({ id: medications.id }).from(medications).where(eq(medications.id, medId)).for("update");
-      if (!med) throw new UserError("药品不存在或已被删除");
-      const { sim, order, regimens } = await simulationOf(tx, medId, today);
-      const at = `${fmtDate(date)}${SLOT_LABEL[slot]}上`;
-      const day = sim.days.find((d) => d.date === date);
-      if (day?.paused) throw new UserError(`${fmtDate(date)}在住院，不吃家里的药`);
-      const scheduled = regimenAt(regimens, date)?.[slot] ?? 0;
-      if (scheduled <= 0) throw new UserError(`按规律${at}不用吃这种药`);
-      if (quantity > scheduled) throw new UserError(`按规律${at}只吃 ${scheduled} 颗`);
+      const { day, order, at, assertRoom } = await openDose(tx, medId, date, slot);
+      assertRoom(quantity);
       const [missed] = await tx
         .insert(missedDoses)
         .values({ medicationId: medId, date, slot, quantity, kept })

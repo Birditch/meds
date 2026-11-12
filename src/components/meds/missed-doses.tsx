@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { fmtDate, type ISODate } from "@/lib/meds/dates";
-import { MISSED_DOSE_KEPT_LABEL, SLOT_NAME, fmtQty, type MedicationStatus } from "@/lib/meds/format";
-import { SLOTS, packBalancesAt, regimenAt, type Moment, type Slot } from "@/lib/meds/simulate";
+import { MISSED_DOSE_KEPT_LABEL, doseClaims, fmtQty, type MedicationStatus } from "@/lib/meds/format";
+import { SLOTS, SLOT_NAME, packBalancesAt, regimenAt, type Moment, type Slot } from "@/lib/meds/simulate";
 import { MISSED_DOSE_KEPT, type MedicationRecord, type MissedDoseKept, type MissedDoseRecord } from "@/lib/meds/types";
 import { missedDoseSchema } from "@/lib/meds/validation";
 import { cn } from "@/lib/utils";
@@ -28,10 +28,9 @@ function scheduledOn(medication: MedicationRecord, status: Status, date: ISODate
   return r ? SLOTS.filter((s) => r[s] > 0).map((slot) => ({ slot, dose: r[slot] })) : [];
 }
 
-/** Today: the latest slot already behind us; another day: its first. Skips slots already recorded. */
+/** Today: the latest dose already behind us; another day: its first. Skips doses already fully recorded. */
 function defaultSlot(medication: MedicationRecord, status: Status, date: ISODate, now: Moment): Slot | null {
-  const recorded = new Set(medication.misses.filter((x) => x.date === date).map((x) => x.slot));
-  const open = scheduledOn(medication, status, date).filter((o) => !recorded.has(o.slot));
+  const open = scheduledOn(medication, status, date).filter((o) => doseClaims(medication, date, o.slot).open > 0);
   const past = date === now.date ? open.filter((o) => SLOTS.indexOf(o.slot) < now.slotsDone) : [];
   return (past.at(-1) ?? open[0])?.slot ?? null;
 }
@@ -49,7 +48,9 @@ export function MissedDoseForm({
   onDone: () => void;
 }) {
   const today = now.date;
-  const doseOf = (date: ISODate, slot: Slot | null) => scheduledOn(medication, status, date).find((o) => o.slot === slot)?.dose ?? 0;
+  // What is still open of that dose: not missed yet, nor taken from the reserve in its place.
+  const doseOf = (date: ISODate, slot: Slot | null) =>
+    slot && scheduledOn(medication, status, date).some((o) => o.slot === slot) ? doseClaims(medication, date, slot).open : 0;
   const [date, setDate] = useState(today);
   const [slot, setSlot] = useState<Slot | null>(() => defaultSlot(medication, status, today, now));
   const [qty, setQty] = useState(() => fmtQty(doseOf(today, slot)));
@@ -71,7 +72,6 @@ export function MissedDoseForm({
     setPackId(sourcePack(d, s));
   };
   const slots = scheduledOn(medication, status, date);
-  const recorded = new Set(medication.misses.filter((x) => x.date === date).map((x) => x.slot));
   const dose = doseOf(date, slot);
   const paused = status.sim.days.find((d) => d.date === date)?.paused;
 
@@ -84,7 +84,7 @@ export function MissedDoseForm({
         if (!slot) return setError("请选择哪一顿没吃");
         const parsed = missedDoseSchema.safeParse({ date, slot, quantity: parseQuantity(qty), kept, packId: kept === "reserve" ? packId : null });
         if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "输入无效");
-        if (parsed.data.quantity > dose) return setError(`这一顿按规律只吃 ${fmtQty(dose)} 颗`);
+        if (parsed.data.quantity > dose) return setError(`这一顿还没记的只有 ${fmtQty(dose)} 颗`);
         if (kept === "reserve") {
           const taken = status.sim.days.find((d) => d.date === date)?.slots[SLOTS.indexOf(slot)].taken ?? 0;
           if (taken < parsed.data.quantity) return setError(`按记录这一顿当前余量只够扣 ${fmtQty(taken)} 颗，放不进储备`);
@@ -122,7 +122,8 @@ export function MissedDoseForm({
         ) : (
           <div role="radiogroup" aria-labelledby={`${uid}-slot`} className="flex flex-wrap gap-1.5">
             {slots.map((o) => {
-              const done = recorded.has(o.slot);
+              const claims = doseClaims(medication, date, o.slot);
+              const done = claims.open <= 0;
               return (
                 <Button
                   key={o.slot}
@@ -134,7 +135,7 @@ export function MissedDoseForm({
                   variant={slot === o.slot ? "default" : "outline"}
                   onClick={() => pickSlot(date, o.slot)}
                 >
-                  {SLOT_NAME[o.slot]} {fmtQty(o.dose)} 颗{done && "（已记）"}
+                  {SLOT_NAME[o.slot]} {fmtQty(o.dose)} 颗{done ? (claims.fromReserve ? "（吃的储备）" : "（已记）") : claims.scheduled > claims.open && `（还剩 ${fmtQty(claims.open)} 颗没记）`}
                 </Button>
               );
             })}
@@ -149,7 +150,7 @@ export function MissedDoseForm({
             <div className="w-44">
               <QuantityInput id={`${uid}-qty`} label="没吃的颗数" value={qty} onChange={setQty} />
             </div>
-            {dose > 0.5 && <p className="text-xs text-muted-foreground">整顿没吃就是 {fmtQty(dose)} 颗；只吃了一部分就填没吃的那些。</p>}
+            {dose > 0.5 && <p className="text-xs text-muted-foreground">这一顿没记的 {fmtQty(dose)} 颗都没吃就填 {fmtQty(dose)}；吃了一部分就填没吃的那些。</p>}
           </div>
 
           <div className="grid gap-2">

@@ -1,6 +1,8 @@
 import { diffDays, fmtDate, type ISODate } from "./dates";
 import {
+  SLOTS,
   SLOT_LABEL,
+  SLOT_NAME,
   balanceAt,
   dailyTotal,
   finalDose,
@@ -21,33 +23,24 @@ import {
   type Simulation,
   type SkipInput,
   type Slot,
+  type WithdrawalInput,
   type SupplyInput,
 } from "./simulate";
-import type { MedicationRecord, MissedDoseKept, PackRecord, ReserveTakeTime, ReserveUseReason } from "./types";
+import type { MedicationRecord, MissedDoseKept, PackRecord, ReserveUseReason } from "./types";
 import { planHorizon, planVisits, type VisitPlan, type VisitSchedule } from "./visits";
 
 /** When a stock count was taken, by how many of the day's doses were behind it. */
-export const COUNT_MOMENT_LABEL = ["早上服药前", "早上服药后", "中午服药后", "晚上服药后"] as const;
-
-/** 已服用: when in the day pills were taken from the reserve. */
-export const RESERVE_TAKE_TIME_LABEL: Record<ReserveTakeTime, string> = { morning: "早上", noon: "中午", evening: "晚上", bedtime: "睡前" };
-
-/** The time of day a minute of the (Beijing) day most likely means: 早上 until 11:00, 中午 until 16:00, 晚上 until 21:00, then 睡前. */
-export const takeTimeAt = (minutes: number): ReserveTakeTime =>
-  minutes < 11 * 60 ? "morning" : minutes < 16 * 60 ? "noon" : minutes < 21 * 60 ? "evening" : "bedtime";
+export const COUNT_MOMENT_LABEL = [`${SLOT_NAME.morning}服药前`, ...SLOTS.map((s) => `${SLOT_NAME[s]}服药后`)] as const;
 
 /** 消耗储备: why the pills left the reserve, in the order offered, with what each one covers. */
 export const RESERVE_USE_REASON: Record<ReserveUseReason, { label: string; hint: string }> = {
-  taken: { label: "已服用", hint: "从储备里拿来吃了，如按需服用、临时加一颗（按规律吃的从当前余量扣，不用记在这里）" },
+  taken: { label: "已服用", hint: "从储备里拿来吃了：按规律的某一顿改吃储备，或按需、临时多吃" },
   carry: { label: "带走", hint: "随身带走或放到别处：出差旅行、住院自带、放在单位或另一个家" },
   discarded: { label: "丢弃", hint: "过期、受潮、变色、碎了、掉地上或被污染，扔掉或交药品回收" },
   lost: { label: "遗失", hint: "丢了或找不到了" },
   given: { label: "送人/退药", hint: "给了家人朋友或其他病友，或退回医院、药店" },
   other: { label: "其他", hint: "以上都不是：请在备注里写明" },
 };
-
-/** 早上 / 中午 / 晚上 */
-export const SLOT_NAME: Record<Slot, string> = { morning: "早上", noon: "中午", evening: "晚上" };
 
 /** 漏服: where the pills not taken went, in the order offered, with what it does. */
 export const MISSED_DOSE_KEPT_LABEL: Record<MissedDoseKept, { label: string; hint: string }> = {
@@ -56,8 +49,33 @@ export const MISSED_DOSE_KEPT_LABEL: Record<MissedDoseKept, { label: string; hin
   none: { label: "不补回", hint: "药已经丢了或扔了：当前余量照常扣，只记一笔漏服" },
 };
 
-/** The doses not taken whose pills stayed in the stock, for the simulation. */
-export const skipsOf = (m: Pick<MedicationRecord, "misses">) => m.misses.filter((x) => x.kept === "stock");
+/** The doses (or parts) not taken from the stock, for the simulation: missed and kept there, or taken from the reserve. */
+export function skipsOf(m: Pick<MedicationRecord, "misses" | "reserveLogs">): SkipInput[] {
+  return [
+    ...m.misses.filter((x) => x.kept === "stock"),
+    ...m.reserveLogs.flatMap((l) => (l.regular && l.timeOfDay ? [{ date: l.date, slot: l.timeOfDay, quantity: -l.delta, fromReserve: true }] : [])),
+  ];
+}
+
+/**
+ * One scheduled dose: the pills the regimen has for it, those already recorded as missed (漏服) or
+ * taken from the reserve in its place (已服用 · 按规律), and what is still open. The server checks the same.
+ */
+export function doseClaims(m: Pick<MedicationRecord, "regimens" | "misses" | "reserveLogs">, date: ISODate, slot: Slot) {
+  const scheduled = regimenAt(m.regimens, date)?.[slot] ?? 0;
+  const missed = m.misses.filter((x) => x.date === date && x.slot === slot).reduce((n, x) => n + x.quantity, 0);
+  const fromReserve = m.reserveLogs.filter((l) => l.regular && l.date === date && l.timeOfDay === slot).reduce((n, l) => n - l.delta, 0);
+  return { scheduled, missed, fromReserve, open: Math.max(0, scheduled - missed - fromReserve) };
+}
+
+/** The pills moved from the stock into the reserve, for the simulation (older transfers are stock counts already). */
+export function withdrawalsOf(m: Pick<MedicationRecord, "reserveLogs">): WithdrawalInput[] {
+  return m.reserveLogs.flatMap((l) =>
+    l.kind === "transfer" && !l.viaCount && l.slotsDone !== null
+      ? [{ date: l.date, slotsDone: l.slotsDone, quantity: l.delta, recordedAt: l.recordedAt, packId: l.packId }]
+      : [],
+  );
+}
 
 /** 100 → "100", 1.5 → "1.5" */
 export const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
@@ -274,8 +292,10 @@ export interface StatusOptions {
   counts?: readonly CountInput[];
   /** Pack ids, default first: each keeps its own balance (see simulate). */
   packs?: readonly number[];
-  /** Doses not taken whose pills stayed in the stock. */
+  /** Doses (or parts) not taken from the stock. */
   skips?: readonly SkipInput[];
+  /** Pills moved from the stock into the reserve. */
+  withdrawals?: readonly WithdrawalInput[];
 }
 
 export function medicationStatus<R extends RegimenInput>(
@@ -283,9 +303,9 @@ export function medicationStatus<R extends RegimenInput>(
   regimens: readonly R[],
   now: Moment,
   schedule: readonly VisitSchedule[] = [],
-  { pauses = [], perBox = null, counts = [], packs = [], skips = [] }: StatusOptions = {},
+  { pauses = [], perBox = null, counts = [], packs = [], skips = [], withdrawals = [] }: StatusOptions = {},
 ): MedicationStatus<R> {
-  const sim = simulate(supplies, regimens, { today: now.date, until: planHorizon(schedule), pauses, counts, packs, skips });
+  const sim = simulate(supplies, regimens, { today: now.date, until: planHorizon(schedule), pauses, counts, packs, skips, withdrawals });
   return {
     sim,
     current: regimenAt(regimens, now.date),
@@ -299,7 +319,7 @@ export function medicationStatus<R extends RegimenInput>(
 
 /** medicationStatus of a stored medication: its supplies, counts and packs. */
 export function statusOf(
-  m: Pick<MedicationRecord, "supplies" | "regimens" | "counts" | "packs" | "perBox" | "misses">,
+  m: Pick<MedicationRecord, "supplies" | "regimens" | "counts" | "packs" | "perBox" | "misses" | "reserveLogs">,
   now: Moment,
   schedule: readonly VisitSchedule[],
   pauses: readonly DateRange[],
@@ -310,6 +330,7 @@ export function statusOf(
     counts: m.counts,
     packs: m.packs.map((p) => p.id),
     skips: skipsOf(m),
+    withdrawals: withdrawalsOf(m),
   });
 }
 

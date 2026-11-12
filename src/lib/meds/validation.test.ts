@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RESERVE_USE_REASONS } from "./types";
-import { takeTimeAt } from "./format";
+import { slotAt } from "./simulate";
 import { missedDoseSchema, reserveDrawSchema, reserveDrawsSchema, reserveUseSchema } from "./validation";
 
 const message = (r: { success: boolean; error?: { issues: { message: string }[] } }) => r.error?.issues[0]?.message;
@@ -24,27 +24,31 @@ describe("taking pills out of the reserve needs a source", () => {
 });
 
 describe("taking pills straight from the reserve (已服用)", () => {
-  const take = { date: "2026-11-12", quantity: 1, reason: "taken", timeOfDay: "bedtime" };
+  const take = { date: "2026-11-12", quantity: 1, reason: "taken", timeOfDay: "evening" };
 
-  it("needs when in the day, takes an optional note", () => {
-    expect(reserveUseSchema.parse(take)).toEqual({ ...take, note: null });
+  it("names the dose with the regimen's 早 / 中 / 晚 and takes an optional note", () => {
+    expect(reserveUseSchema.parse(take)).toEqual({ ...take, regular: false, note: null });
     expect(reserveUseSchema.parse({ ...take, note: " 睡不着 " }).note).toBe("睡不着");
-    expect(message(reserveUseSchema.safeParse({ ...take, timeOfDay: undefined }))).toBe("请选择什么时候吃的");
-    expect(message(reserveUseSchema.safeParse({ ...take, timeOfDay: "night" }))).toBeDefined();
+    expect(message(reserveUseSchema.safeParse({ ...take, timeOfDay: undefined }))).toBe("请选择哪一顿吃的");
+    // There is no 睡前 dose anywhere.
+    expect(reserveUseSchema.safeParse({ ...take, timeOfDay: "bedtime" }).success).toBe(false);
   });
 
-  it("keeps the time of day for 已服用 only", () => {
-    expect(reserveUseSchema.parse({ ...take, reason: "lost" }).timeOfDay).toBeNull();
+  it("keeps the dose and 按规律 for 已服用 only", () => {
+    expect(reserveUseSchema.parse({ ...take, regular: true }).regular).toBe(true);
+    expect(reserveUseSchema.parse({ ...take, reason: "lost", regular: true })).toMatchObject({ timeOfDay: null, regular: false });
   });
 
-  it("guesses the time of day from the clock", () => {
-    expect([7 * 60, 11 * 60, 15 * 60 + 59, 18 * 60, 21 * 60, 23 * 60 + 59].map(takeTimeAt)).toEqual([
+  it("guesses the dose from the clock the way every other form does", () => {
+    expect([0, 7 * 60 + 59, 8 * 60, 11 * 60 + 59, 12 * 60, 17 * 60 + 59, 18 * 60, 23 * 60 + 59].map(slotAt)).toEqual([
+      "morning",
+      "morning",
+      "morning",
       "morning",
       "noon",
       "noon",
       "evening",
-      "bedtime",
-      "bedtime",
+      "evening",
     ]);
   });
 });
@@ -71,7 +75,7 @@ describe("using pills up straight from the reserve", () => {
     expect(reserveUseSchema.parse({ ...use, note: "   " }).note).toBeNull();
     expect(reserveUseSchema.parse(use).note).toBeNull();
     // What the form sends after parsing is accepted again by the action.
-    expect(reserveUseSchema.parse(reserveUseSchema.parse(use))).toEqual({ ...use, timeOfDay: null, note: null });
+    expect(reserveUseSchema.parse(reserveUseSchema.parse(use))).toEqual({ ...use, timeOfDay: null, regular: false, note: null });
   });
 
   it("is written as a positive amount, half pills allowed", () => {
