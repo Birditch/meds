@@ -147,11 +147,11 @@ function SlotLine({ s }: { s: SlotOutcome }) {
   let cls = "";
   switch (s.status) {
     case "none":
-      text = "不服";
+      text = s.skipped ? `漏服 ${fmtQty(s.skipped)} 颗，留在当前` : "不服";
       cls = "text-muted-foreground";
       break;
     case "full":
-      text = `−${fmtQty(s.taken)} → 剩 ${fmtQty(s.after)}`;
+      text = `−${fmtQty(s.taken)} → 剩 ${fmtQty(s.after)}${s.skipped ? `（漏服 ${fmtQty(s.skipped)} 颗留在当前）` : ""}`;
       break;
     case "partial":
       text = `仅 ${fmtQty(s.taken)}/${fmtQty(s.required)} → 剩 0（不足一顿）`;

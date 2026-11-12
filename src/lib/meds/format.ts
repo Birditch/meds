@@ -19,13 +19,40 @@ import {
   type RegimenInput,
   type Shortfall,
   type Simulation,
+  type SkipInput,
+  type Slot,
   type SupplyInput,
 } from "./simulate";
-import type { MedicationRecord, PackRecord } from "./types";
+import type { MedicationRecord, MissedDoseKept, PackRecord, ReserveUseReason } from "./types";
 import { planHorizon, planVisits, type VisitPlan, type VisitSchedule } from "./visits";
 
 /** When a stock count was taken, by how many of the day's doses were behind it. */
 export const COUNT_MOMENT_LABEL = ["早上服药前", "早上服药后", "中午服药后", "晚上服药后"] as const;
+
+/** 消耗储备: why the pills left the reserve, in the order offered, with what each one covers. */
+export const RESERVE_USE_REASON: Record<ReserveUseReason, { label: string; hint: string }> = {
+  extra: { label: "额外服用", hint: "规律之外多吃的：症状加重、按需服用、医嘱临时加量或补服" },
+  carry: { label: "带走备用", hint: "随身带走或放到别处：出差旅行、住院自带、放在单位或另一个家" },
+  expired: { label: "过期处理", hint: "过期或快过期了，丢弃或交到药品回收点" },
+  damaged: { label: "损坏丢弃", hint: "受潮、变色、碎裂、掉在地上或被污染，不能再吃" },
+  lost: { label: "遗失", hint: "丢了或找不到了" },
+  given: { label: "给了别人", hint: "给家人、朋友或其他病友用了" },
+  returned: { label: "退药", hint: "退回医院或药店" },
+  other: { label: "其他", hint: "以上都不是：请在备注里写明" },
+};
+
+/** 早上 / 中午 / 晚上 */
+export const SLOT_NAME: Record<Slot, string> = { morning: "早上", noon: "中午", evening: "晚上" };
+
+/** 漏服: where the pills not taken went, in the order offered, with what it does. */
+export const MISSED_DOSE_KEPT_LABEL: Record<MissedDoseKept, { label: string; hint: string }> = {
+  stock: { label: "留在当前余量", hint: "药还在，这一顿不扣当前余量，能吃到的日期往后顺延" },
+  reserve: { label: "放进储备", hint: "当前余量照常扣掉这一顿，这些药加进储备" },
+  none: { label: "不补回", hint: "药已经丢了或扔了：当前余量照常扣，只记一笔漏服" },
+};
+
+/** The doses not taken whose pills stayed in the stock, for the simulation. */
+export const skipsOf = (m: Pick<MedicationRecord, "misses">) => m.misses.filter((x) => x.kept === "stock");
 
 /** 100 → "100", 1.5 → "1.5" */
 export const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
@@ -242,6 +269,8 @@ export interface StatusOptions {
   counts?: readonly CountInput[];
   /** Pack ids, default first: each keeps its own balance (see simulate). */
   packs?: readonly number[];
+  /** Doses not taken whose pills stayed in the stock. */
+  skips?: readonly SkipInput[];
 }
 
 export function medicationStatus<R extends RegimenInput>(
@@ -249,9 +278,9 @@ export function medicationStatus<R extends RegimenInput>(
   regimens: readonly R[],
   now: Moment,
   schedule: readonly VisitSchedule[] = [],
-  { pauses = [], perBox = null, counts = [], packs = [] }: StatusOptions = {},
+  { pauses = [], perBox = null, counts = [], packs = [], skips = [] }: StatusOptions = {},
 ): MedicationStatus<R> {
-  const sim = simulate(supplies, regimens, { today: now.date, until: planHorizon(schedule), pauses, counts, packs });
+  const sim = simulate(supplies, regimens, { today: now.date, until: planHorizon(schedule), pauses, counts, packs, skips });
   return {
     sim,
     current: regimenAt(regimens, now.date),
@@ -265,7 +294,7 @@ export function medicationStatus<R extends RegimenInput>(
 
 /** medicationStatus of a stored medication: its supplies, counts and packs. */
 export function statusOf(
-  m: Pick<MedicationRecord, "supplies" | "regimens" | "counts" | "packs" | "perBox">,
+  m: Pick<MedicationRecord, "supplies" | "regimens" | "counts" | "packs" | "perBox" | "misses">,
   now: Moment,
   schedule: readonly VisitSchedule[],
   pauses: readonly DateRange[],
@@ -275,6 +304,7 @@ export function statusOf(
     perBox: m.perBox,
     counts: m.counts,
     packs: m.packs.map((p) => p.id),
+    skips: skipsOf(m),
   });
 }
 

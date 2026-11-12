@@ -130,18 +130,57 @@ export const reserveLogs = pgTable(
       .notNull()
       .references(() => medicationPacks.id, { onDelete: "cascade" }),
     date: date({ mode: "string" }).notNull(),
-    /** restock: bought into the reserve; draw: taken into the stock; count: corrected; transfer: moved from the stock. */
-    kind: text({ enum: ["restock", "draw", "count", "transfer"] }).notNull(),
+    /**
+     * restock: bought into the reserve; draw: taken into the stock; count: corrected; transfer: moved
+     * from the stock; use: used up straight from the reserve (never part of the stock); missed: the
+     * pills of a dose not taken, put into the reserve.
+     */
+    kind: text({ enum: ["restock", "draw", "count", "transfer", "use", "missed"] }).notNull(),
     delta: numeric({ precision: 10, scale: 1, mode: "number" }).notNull(),
     supplyLogId: integer().references(() => supplyLogs.id, { onDelete: "set null" }),
     stockCountId: integer().references(() => stockCounts.id, { onDelete: "set null" }),
+    missedDoseId: integer().references(() => missedDoses.id, { onDelete: "set null" }),
+    /** A use: why the pills left the reserve (RESERVE_USE_REASONS), and anything written down about it. */
+    reason: text({ enum: ["extra", "carry", "expired", "damaged", "lost", "given", "returned", "other"] }),
+    note: text(),
     createdAt: timestamp({ withTimezone: true, mode: "date" }).notNull().defaultNow(),
   },
   (t) => [
     index("reserve_logs_medication_date_idx").on(t.medicationId, t.date),
-    check("reserve_logs_kind", sql`${t.kind} in ('restock', 'draw', 'count', 'transfer')`),
+    check("reserve_logs_kind", sql`${t.kind} in ('restock', 'draw', 'count', 'transfer', 'use', 'missed')`),
+    check(
+      "reserve_logs_reason",
+      sql`${t.reason} is null or ${t.reason} in ('extra', 'carry', 'expired', 'damaged', 'lost', 'given', 'returned', 'other')`,
+    ),
     check("reserve_logs_delta_non_zero", sql`${t.delta} <> 0`),
     check("reserve_logs_delta_half_step", halfStep("delta")),
+  ],
+);
+
+/**
+ * 漏服: (part of) a scheduled dose not taken. `kept` says where its pills went: still in the stock
+ * (that slot takes `quantity` less), into the reserve (linked from a reserve log of kind "missed"),
+ * or gone; in the last two the stock goes down as if the dose was taken.
+ */
+export const missedDoses = pgTable(
+  "missed_doses",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    medicationId: integer()
+      .notNull()
+      .references(() => medications.id, { onDelete: "cascade" }),
+    date: date({ mode: "string" }).notNull(),
+    slot: text({ enum: ["morning", "noon", "evening"] }).notNull(),
+    quantity: numeric({ precision: 6, scale: 1, mode: "number" }).notNull(),
+    kept: text({ enum: ["stock", "reserve", "none"] }).notNull(),
+    createdAt: timestamp({ withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("missed_doses_medication_date_slot_key").on(t.medicationId, t.date, t.slot),
+    check("missed_doses_slot", sql`${t.slot} in ('morning', 'noon', 'evening')`),
+    check("missed_doses_kept", sql`${t.kept} in ('stock', 'reserve', 'none')`),
+    check("missed_doses_quantity_positive", sql`${t.quantity} > 0`),
+    check("missed_doses_quantity_half_step", halfStep("quantity")),
   ],
 );
 

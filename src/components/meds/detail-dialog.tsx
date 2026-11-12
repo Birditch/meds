@@ -23,6 +23,7 @@ import type { DateRange, Moment } from "@/lib/meds/simulate";
 import type { MedicationRecord } from "@/lib/meds/types";
 import { visitOrdinal } from "@/lib/meds/visits";
 import { ConfirmDelete, RegimenTimeline, ReserveHistory, SupplyHistory } from "./history";
+import { MissedDoseHistory } from "./missed-doses";
 import { keepDialogForSuggestions } from "./catalog-fields";
 import { EditMedicationForm, ReservePanel } from "./medication-dialogs";
 import { PackAmounts, PacksPanel } from "./packs";
@@ -265,7 +266,10 @@ export function DetailDialog({
                 <SupplyHistory medication={medication} today={now.date} pauses={stays} visits={visits} />
                 <ReserveHistory medication={medication} today={now.date} />
               </div>
-              <RegimenTimeline medication={medication} today={now.date} />
+              <div className="grid content-start gap-6">
+                <RegimenTimeline medication={medication} today={now.date} />
+                <MissedDoseHistory medication={medication} status={status} now={now} />
+              </div>
             </div>
           </>
         )}

@@ -36,6 +36,7 @@ const med = (
   supplies: supplies.map(([date, quantity]) => ({ id: nextId++, date, quantity, packId: null, recordedAt: 0, fromReserve: false, source: null })),
   counts: [],
   reserveLogs: [],
+  misses: [],
   regimens: [{ id: nextId++, effectiveFrom: "2026-11-01", morning: daily === 2 ? 1 : 0, noon: 0, evening: 1 }],
   searchKeys: [],
 });

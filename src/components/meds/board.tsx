@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { fmtDate } from "@/lib/meds/dates";
+import { fmtDate, type ISODate } from "@/lib/meds/dates";
 import {
   describeReserve,
   describeShortfall,
@@ -24,6 +24,7 @@ import {
   type Tone,
 } from "@/lib/meds/format";
 import { searchMedications } from "@/lib/meds/search";
+import { SLOTS, SLOT_LABEL } from "@/lib/meds/simulate";
 import { drugKey, groupStrengths, sortStrengths } from "@/lib/meds/similar";
 import { sortTags, tagLabel } from "@/lib/meds/tags";
 import type { MedicationRecord } from "@/lib/meds/types";
@@ -34,6 +35,7 @@ import { CatalogMatchDialog } from "./catalog-match-dialog";
 import { DetailDialog } from "./detail-dialog";
 import { useHasImportDraft } from "./import-draft";
 import { AddSupplyDialog, CreateMedicationDialog, RegimenDialog, ReserveDialog, type ReserveTab } from "./medication-dialogs";
+import { MissedDoseDialog } from "./missed-doses";
 import { PageTitle } from "./page-title";
 import { packLabel } from "./forms";
 import { PackAmounts } from "./packs";
@@ -42,7 +44,7 @@ import { StrengthTabs } from "./strength-tabs";
 import { TONE_CLASS, TagBadges } from "./tags";
 import { useMeds, type MedsData } from "./use-meds";
 
-type Panel = { kind: "supply" | "regimen" | "reserve" | "detail"; id: number; reserveTab?: ReserveTab } | null;
+type Panel = { kind: "supply" | "regimen" | "reserve" | "missed" | "detail"; id: number; reserveTab?: ReserveTab } | null;
 
 /** 在吃 / 未在吃, kept in the URL (`?tab=inactive`) so it survives a reload and can be linked. */
 type Tab = "active" | "inactive";
@@ -321,6 +323,8 @@ export function Board(data: MedsData) {
                 onReserve={() => setPanel({ kind: "reserve", id: m.id })}
                 onTransfer={() => setPanel({ kind: "reserve", id: m.id, reserveTab: "transfer" })}
                 onDetail={() => setPanel({ kind: "detail", id: m.id })}
+                onMissed={() => setPanel({ kind: "missed", id: m.id })}
+                today={clock.date}
               />
             );
           })}
@@ -344,6 +348,13 @@ export function Board(data: MedsData) {
         initialTab={panel?.reserveTab}
         onOpenChange={close}
         today={clock.date}
+        {...strengths}
+      />
+      <MissedDoseDialog
+        medication={open("missed")}
+        status={current ? (statuses.get(current.id) ?? null) : null}
+        now={now}
+        onOpenChange={close}
         {...strengths}
       />
       <DetailDialog
@@ -383,6 +394,8 @@ function MedicationCard({
   onReserve,
   onTransfer,
   onDetail,
+  onMissed,
+  today,
 }: {
   medication: MedicationRecord;
   /** The drug's strengths on this card (just `medication` when it has one). */
@@ -396,6 +409,8 @@ function MedicationCard({
   onReserve: () => void;
   onTransfer: () => void;
   onDetail: () => void;
+  onMissed: () => void;
+  today: ISODate;
 }) {
   const { conclusion, shortfall } = status;
   const next = status.plan.visits[0];
@@ -405,6 +420,7 @@ function MedicationCard({
   const balanceNote = packNote(status.balanceNow, medication);
   const reserveNote = packNote(medication.reserve, medication);
   const taking = isTaking(intake);
+  const missedToday = medication.misses.filter((x) => x.date === today).sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot));
   // The status box already says 已停药 / 未设规律: the badge adds when.
   const intakeNote =
     intake.kind === "starting" ? intakeLabel(intake) : intake.kind === "stopped" ? `${fmtDate(intake.since)} 起停药` : null;
@@ -443,7 +459,19 @@ function MedicationCard({
       </CardHeader>
       <CardContent className="grid gap-3 text-sm">
         {/* Not being taken: the status box says 已停药 / 未设规律; leftover pills still show. */}
-        {taking && <Row label="当前规律">{formatRegimen(status.current)}</Row>}
+        {taking && (
+          <Row label="当前规律">
+            {formatRegimen(status.current)}
+            {missedToday.length > 0 && (
+              <span className="text-xs text-amber-700 dark:text-amber-400">
+                今天漏服：{missedToday.map((x) => `${SLOT_LABEL[x.slot]} ${fmtQty(x.quantity)} 颗`).join("、")}
+              </span>
+            )}
+            <button type="button" className="text-xs text-primary underline-offset-4 hover:underline" onClick={onMissed}>
+              记漏服
+            </button>
+          </Row>
+        )}
         {(taking || status.balanceNow > 0) && (
           <Row label="今日当前剩余">
             <span className="text-xl font-semibold">{fmtQty(status.balanceNow)} 颗</span>
@@ -503,7 +531,7 @@ function MedicationCard({
           <PlusIcon />
           {taking ? "补药" : "补进储备"}
         </Button>
-        <Button size="sm" variant="outline" onClick={onReserve} title="补进储备、取用到当前、盘点或把当前余量转入储备">
+        <Button size="sm" variant="outline" onClick={onReserve} title="补进储备、取用到当前、记录消耗、盘点或把当前余量转入储备">
           <ArchiveIcon />
           管理储备
         </Button>

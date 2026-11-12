@@ -3,7 +3,7 @@
 import { CopyIcon, CopyPlusIcon, PackagePlusIcon, TriangleAlertIcon } from "lucide-react";
 import { useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { addPack, addReserve, addSupply, createMedication, drawFromReserve, saveRegimen, setReserve, transferToReserve, updateMedication } from "@/app/actions";
+import { addPack, addReserve, addSupply, createMedication, drawFromReserve, recordReserveUse, saveRegimen, setReserve, transferToReserve, updateMedication } from "@/app/actions";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,13 +21,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { fmtDate, type ISODate } from "@/lib/meds/dates";
-import { describeReserve, fmtPacks, fmtQty, formatRegimen, formatRegimenShort, intakeAt, isTaking, packShares, type MedicationStatus } from "@/lib/meds/format";
+import { RESERVE_USE_REASON, describeReserve, fmtPacks, fmtQty, formatRegimen, formatRegimenShort, intakeAt, isTaking, packShares, type MedicationStatus } from "@/lib/meds/format";
 import { SIMILARITY_LABEL, findSimilar, type SimilarMatch } from "@/lib/meds/similar";
 import { regimenAt, type DateRange } from "@/lib/meds/simulate";
 import type { CatalogMatch } from "@/lib/meds/drug-catalog/match";
 import { normalizeTags } from "@/lib/meds/tags";
-import { PACK_UNITS, type MedicationRecord, type PackRecord, type PackUnit } from "@/lib/meds/types";
-import { createMedicationSchema, medicationInfoSchema, packSchema, quantitySchema, reserveDrawSchema, reserveEntrySchema, reserveSchema } from "@/lib/meds/validation";
+import { PACK_UNITS, RESERVE_USE_REASONS, type MedicationRecord, type PackRecord, type PackUnit, type ReserveUseReason } from "@/lib/meds/types";
+import { createMedicationSchema, medicationInfoSchema, packSchema, quantitySchema, reserveDrawSchema, reserveEntrySchema, reserveSchema, reserveUseSchema } from "@/lib/meds/validation";
 import { cn } from "@/lib/utils";
 import { DatePicker } from "./date-picker";
 import {
@@ -625,7 +625,7 @@ export function EditMedicationForm({ medication, onDone }: { medication: Medicat
 const medLabel = (m: MedicationRecord) => [m.name, m.dosage, m.packs.map((p) => p.brand).filter(Boolean).join(" / ")].filter(Boolean).join(" · ");
 
 /** A row of mutually exclusive actions. */
-function ModeTabs<T extends string>({ label, tabs, value, onChange }: { label: string; tabs: readonly (readonly [T, string])[]; value: T; onChange: (tab: T) => void }) {
+export function ModeTabs<T extends string>({ label, tabs, value, onChange }: { label: string; tabs: readonly (readonly [T, string])[]; value: T; onChange: (tab: T) => void }) {
   return (
     <div role="tablist" aria-label={label} className="inline-flex w-fit flex-wrap rounded-md border p-0.5 text-sm">
       {tabs.map(([key, text]) => (
@@ -817,6 +817,7 @@ export function ReserveDialog({
 const RESERVE_TABS = [
   ["restock", "补进储备"],
   ["draw", "取用到当前"],
+  ["use", "消耗储备"],
   ["count", "盘点储备"],
   ["transfer", "当前转入储备"],
 ] as const;
@@ -828,7 +829,7 @@ const reserveText = (pills: number, p: Pick<PackRecord, "perBox" | "packUnit">) 
   return p.perBox && pills >= p.perBox ? `${packs}（${fmtQty(pills)} 颗）` : packs;
 };
 
-/** Each manufacturer's reserve, kept apart: refill it, take some into the current stock, count it, or put stock back. */
+/** Each manufacturer's reserve, kept apart: refill it, take some into the current stock, record some used up, count it, or put stock back. */
 export function ReservePanel({
   medication,
   status,
@@ -843,7 +844,9 @@ export function ReservePanel({
   onDone: () => void;
 }) {
   const taking = isTaking(intakeAt(medication.regimens, today));
-  const tabs = RESERVE_TABS.filter(([key]) => (key !== "draw" || taking) && (key !== "transfer" || status.balanceNow > 0));
+  const tabs = RESERVE_TABS.filter(
+    ([key]) => (key !== "draw" || taking) && (key !== "use" || medication.reserve > 0) && (key !== "transfer" || status.balanceNow > 0),
+  );
   const [picked, setTab] = useState<ReserveTab>(initialTab);
   const tab = tabs.some(([key]) => key === picked) ? picked : "restock";
   const current = regimenAt(medication.regimens, today);
@@ -893,7 +896,10 @@ export function ReserveForms({
 }) {
   const stockOf = (p: PackRecord) => (status ? (packShares(medication, status).find((s) => s.pack.id === p.id)?.stock ?? 0) : 0);
   const [packId, setPackId] = useState(
-    () => medication.packs.find((p) => (tab === "draw" ? p.reserve > 0 : tab === "transfer" ? stockOf(p) > 0 : true))?.id ?? medication.packs[0]?.id ?? 0,
+    () =>
+      medication.packs.find((p) => (tab === "draw" || tab === "use" ? p.reserve > 0 : tab === "transfer" ? stockOf(p) > 0 : true))?.id ??
+      medication.packs[0]?.id ??
+      0,
   );
   const pack = medication.packs.find((p) => p.id === packId) ?? medication.packs[0];
   const multi = medication.packs.length > 1;
@@ -913,6 +919,8 @@ export function ReserveForms({
         <ReserveRestockForm key={`restock-${pack.id}`} {...props} />
       ) : tab === "draw" ? (
         <ReserveDrawForm key={`draw-${pack.id}`} {...props} />
+      ) : tab === "use" ? (
+        <ReserveUseForm key={`use-${pack.id}`} {...props} />
       ) : tab === "count" ? (
         <ReserveCountForm key={`count-${pack.id}`} {...props} />
       ) : (
@@ -1064,6 +1072,78 @@ function ReserveDrawForm({ pack, brand, today, onDone }: ReserveFormProps) {
       </p>
       <FormError>{error}</FormError>
       <FormButtons pending={pending} label="取用" onCancel={onDone} />
+    </form>
+  );
+}
+
+/** Pills used up straight from the reserve, and why: it goes down, the current stock and 能吃到 stay as they are. */
+function ReserveUseForm(props: ReserveFormProps) {
+  const { pack, brand, today, onDone } = props;
+  const [date, setDate] = useState(today);
+  // Pills used up are counted one by one; boxes stay a switch away.
+  const [amount, setAmount] = useState<AmountState>(() => ({ ...amountState("", pack.perBox), mode: "pills" }));
+  const [reason, setReason] = useState<ReserveUseReason | null>(null);
+  const [note, setNote] = useState("");
+  const { pending, error, setError, submit } = useActionForm();
+  const uid = useId();
+  const resolved = resolveAmount(amount, pack.packUnit);
+  const value = "value" in resolved ? resolved.value : null;
+  return (
+    <form
+      className="grid gap-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (date > today) return setError("消耗日期不能晚于今天");
+        if ("error" in resolved) return setError(resolved.error);
+        const parsed = reserveUseSchema.safeParse({ date, quantity: value, reason, note });
+        if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "输入无效");
+        if (parsed.data.quantity > pack.reserve) return setError(`${brand}储备只有 ${fmtQty(pack.reserve)} 颗`);
+        submit(
+          () => recordReserveUse(pack.id, parsed.data),
+          () => {
+            toast.success(`已记录${brand}储备${RESERVE_USE_REASON[parsed.data.reason].label} ${fmtQty(parsed.data.quantity)} 颗`);
+            onDone();
+          },
+        );
+      }}
+    >
+      <div className="grid items-start gap-4">
+        <div className="grid gap-2">
+          <Label htmlFor={`${uid}-date`}>消耗日期</Label>
+          <DatePicker id={`${uid}-date`} label="消耗日期" value={date} onChange={setDate} today={today} max={today} />
+        </div>
+        <SupplyAmountInput id={`${uid}-qty`} label={`消耗数量（储备 ${fmtPacks(pack.reserve, pack.perBox, pack.packUnit)}）`} value={amount} onChange={setAmount} unit={pack.packUnit} />
+        <div className="grid gap-2">
+          <span id={`${uid}-reason`} className="text-sm leading-none font-medium">
+            消耗原因
+          </span>
+          <div role="radiogroup" aria-labelledby={`${uid}-reason`} className="flex flex-wrap gap-1.5">
+            {RESERVE_USE_REASONS.map((key) => (
+              <Button
+                key={key}
+                type="button"
+                size="sm"
+                role="radio"
+                aria-checked={reason === key}
+                variant={reason === key ? "default" : "outline"}
+                title={RESERVE_USE_REASON[key].hint}
+                onClick={() => setReason(key)}
+              >
+                {RESERVE_USE_REASON[key].label}
+              </Button>
+            ))}
+          </div>
+          {reason && <p className="text-xs text-muted-foreground">{RESERVE_USE_REASON[reason].hint}</p>}
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor={`${uid}-note`}>{reason === "other" ? "备注（写明原因）" : "备注（可不填）"}</Label>
+          <Input id={`${uid}-note`} placeholder={reason === "other" ? "如：拿去医院做药物浓度检测" : "如：出差带了一周的量"} maxLength={200} value={note} onChange={(e) => setNote(e.target.value)} />
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">直接从储备里少掉的药：{brand}储备减少，记在“储备记录”里；当前余量和能吃到的日期不变。</p>
+      {value && value <= pack.reserve ? <p className="text-sm tabular-nums">消耗后：{reservePreview(props, pack.reserve - value)}</p> : null}
+      <FormError>{error}</FormError>
+      <FormButtons pending={pending} label="记录消耗" onCancel={onDone} />
     </form>
   );
 }

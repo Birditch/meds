@@ -1,4 +1,5 @@
 import type { ISODate } from "./dates";
+import type { Slot } from "./simulate";
 
 export const PACK_UNITS = ["盒", "瓶"] as const;
 export type PackUnit = (typeof PACK_UNITS)[number];
@@ -17,20 +18,48 @@ export interface SupplyRecord {
   source: string | null;
 }
 
-export const RESERVE_LOG_KINDS = ["restock", "draw", "count", "transfer"] as const;
+export const RESERVE_LOG_KINDS = ["restock", "draw", "count", "transfer", "use", "missed"] as const;
 export type ReserveLogKind = (typeof RESERVE_LOG_KINDS)[number];
+
+/** Why pills left the reserve without entering the stock (消耗储备); labels in format.ts. */
+export const RESERVE_USE_REASONS = ["extra", "carry", "expired", "damaged", "lost", "given", "returned", "other"] as const;
+export type ReserveUseReason = (typeof RESERVE_USE_REASONS)[number];
 
 /** One change to a pack's reserve. */
 export interface ReserveLogRecord {
   id: number;
   date: ISODate;
   kind: ReserveLogKind;
-  /** What it did to the reserve, in pills (negative for a draw). */
+  /** What it did to the reserve, in pills (negative for a draw or a use). */
   delta: number;
   packId: number;
   recordedAt: number;
   /** A draw: where the pills came from, when recorded. */
   source: string | null;
+  /** A use: why the pills left the reserve. */
+  reason: ReserveUseReason | null;
+  /** A use: anything written down about it. */
+  note: string | null;
+  /** A missed dose put into the reserve (MissedDoseRecord.id). */
+  missedDoseId: number | null;
+}
+
+/** Where the pills of a dose not taken went: still in the stock, into the reserve, or gone. */
+export const MISSED_DOSE_KEPT = ["stock", "reserve", "none"] as const;
+export type MissedDoseKept = (typeof MISSED_DOSE_KEPT)[number];
+
+/** 漏服: (part of) one scheduled dose not taken. */
+export interface MissedDoseRecord {
+  id: number;
+  date: ISODate;
+  slot: Slot;
+  /** Pills not taken, at most that slot's dose. */
+  quantity: number;
+  /** stock: the slot takes that much less from the stock; reserve / none: the stock goes down as if taken. */
+  kept: MissedDoseKept;
+  /** kept "reserve": the pack whose reserve got the pills. */
+  packId: number | null;
+  recordedAt: number;
 }
 
 /** A stock count: the pills actually at home after `slotsDone` (0–3) of that day's doses. */
@@ -89,6 +118,8 @@ export interface MedicationRecord {
   counts: CountRecord[];
   /** Every recorded change to the reserve, oldest first. */
   reserveLogs: ReserveLogRecord[];
+  /** Doses not taken (漏服), oldest first. */
+  misses: MissedDoseRecord[];
   regimens: RegimenRecord[];
   /** Pinyin of name and every brand (full and initials) and the tags' names, for fuzzy search. */
   searchKeys: string[];

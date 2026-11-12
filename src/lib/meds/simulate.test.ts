@@ -333,6 +333,42 @@ describe("hospital stays", () => {
   });
 });
 
+describe("missed doses kept in the stock", () => {
+  it("takes that slot's pills off nobody: the stock lasts that much longer", () => {
+    // 50 pills at 2/day last through 11-30; the 11-10 morning pill left over covers 12-01 morning.
+    const sim = simulate([sup("2026-11-06", 50)], [reg("2026-11-06", 1, 0, 1)], {
+      skips: [{ date: "2026-11-10", slot: "morning", quantity: 1 }],
+    });
+    expect(day(sim, "2026-11-10")).toMatchObject({ taken: 1, endOfDayBalance: 41 });
+    expect(day(sim, "2026-11-10").slots[0]).toMatchObject({ status: "none", required: 0, taken: 0, skipped: 1 });
+    expect(day(sim, "2026-11-10").slots[2]).not.toHaveProperty("skipped");
+    expect(fullDays(sim)).toMatchObject({ lastFullDay: "2026-11-30", shortDay: { date: "2026-12-01" } });
+  });
+
+  it("skips part of a dose, never more than the dose, and nothing on a hospital day", () => {
+    const sim = simulate([sup("2026-11-06", 50)], [reg("2026-11-06", 2, 0, 0)], {
+      pauses: [{ start: "2026-11-08", end: "2026-11-08" }],
+      skips: [
+        { date: "2026-11-06", slot: "morning", quantity: 0.5 },
+        { date: "2026-11-07", slot: "morning", quantity: 5 },
+        { date: "2026-11-08", slot: "morning", quantity: 2 },
+      ],
+    });
+    expect(day(sim, "2026-11-06").slots[0]).toMatchObject({ status: "full", required: 1.5, taken: 1.5, skipped: 0.5 });
+    expect(day(sim, "2026-11-07").slots[0]).toMatchObject({ status: "none", taken: 0, skipped: 2 });
+    expect(day(sim, "2026-11-08").slots[0]).not.toHaveProperty("skipped");
+    expect(day(sim, "2026-11-09").endOfDayBalance).toBe(46.5);
+  });
+
+  it("is what a later count already includes", () => {
+    const sim = simulate([sup("2026-11-06", 50)], [reg("2026-11-06", 1, 0, 1)], {
+      skips: [{ date: "2026-11-07", slot: "morning", quantity: 1 }],
+      counts: [{ date: "2026-11-07", slotsDone: 3, quantity: 40 }],
+    });
+    expect(day(sim, "2026-11-07").endOfDayBalance).toBe(40);
+  });
+});
+
 describe("stock counts", () => {
   const count = (date: string, slotsDone: 0 | 1 | 2 | 3, quantity: number, recordedAt?: number) => ({
     date,

@@ -50,6 +50,13 @@ export interface CountInput {
   packId?: number | null;
 }
 
+/** (Part of) a dose not taken whose pills stayed in the stock (漏服): that slot takes `quantity` less. */
+export interface SkipInput {
+  date: ISODate;
+  slot: Slot;
+  quantity: number;
+}
+
 export interface RegimenInput extends Dose {
   effectiveFrom: ISODate;
 }
@@ -61,15 +68,18 @@ export interface DateRange {
 }
 
 export type SlotStatus =
-  | "none" // nothing scheduled for this slot
+  | "none" // nothing to take for this slot: none scheduled, or the whole dose skipped
   | "full" // the whole dose was taken
   | "partial" // only part of the dose was left; stock hit 0
   | "missed"; // stock was already 0
 
 export interface SlotOutcome {
   slot: Slot;
+  /** What was to be taken from the stock: the scheduled dose less any skipped part. */
   required: number;
   taken: number;
+  /** Pills of the scheduled dose not taken that stayed in the stock (漏服), when any. */
+  skipped?: number;
   /** Balance right after this slot (and after a stock count taken right then). */
   after: number;
   status: SlotStatus;
@@ -157,6 +167,8 @@ export interface SimulateOptions {
   pauses?: readonly DateRange[];
   /** Stock counts (at most one per day and pack; a later one in the list wins). */
   counts?: readonly CountInput[];
+  /** Doses not taken whose pills stayed in the stock. */
+  skips?: readonly SkipInput[];
   /**
    * The medication's pack ids, in the order their pills are taken (the default first). Each
    * keeps its own balance; supplies and counts name theirs. Pass them whenever a count or
@@ -279,6 +291,13 @@ export function simulate(
   );
   const cap = horizon + Math.round((options.maxYears ?? 10) * 365.25);
   const pauses = (options.pauses ?? []).map((p) => [toDayNum(p.start), toDayNum(p.end)] as const);
+  const skippedOn = new Map<number, [number, number, number]>();
+  for (const k of options.skips ?? []) {
+    const day = toDayNum(k.date);
+    const list = skippedOn.get(day) ?? [0, 0, 0];
+    list[SLOTS.indexOf(k.slot)] += toHalves(k.quantity);
+    skippedOn.set(day, list);
+  }
 
   const days: DaySnapshot[] = [];
   const bal = zeros();
@@ -328,12 +347,15 @@ export function simulate(
     const regimen = regimenIdx >= 0 ? timeline[regimenIdx] : null;
     const paused = pauses.some(([from, to]) => day >= from && day <= to);
 
-    // Step C: morning -> noon -> evening (nothing while in hospital).
+    // Step C: morning -> noon -> evening (nothing while in hospital, less what was skipped).
     let takenToday = 0;
     const slots: SlotOutcome[] = [];
+    const skipped = skippedOn.get(day);
     for (let i = 0; i < SLOTS.length; i++) {
       const slot = SLOTS[i];
-      const dose = regimen && !paused ? regimen.doses[i] : 0;
+      const scheduled = regimen && !paused ? regimen.doses[i] : 0;
+      const skip = Math.min(scheduled, skipped?.[i] ?? 0);
+      const dose = scheduled - skip;
       let taken = 0;
       let status: SlotStatus;
       if (dose <= 0) {
@@ -357,7 +379,14 @@ export function simulate(
       takenToday += taken;
       applyCounts(i + 1);
       if (byPack) byPack.after[i] = bal.map(fromHalves);
-      slots.push({ slot, required: status === "none" ? 0 : fromHalves(dose), taken: fromHalves(taken), after: fromHalves(sum(bal)), status });
+      slots.push({
+        slot,
+        required: status === "none" ? 0 : fromHalves(dose),
+        taken: fromHalves(taken),
+        after: fromHalves(sum(bal)),
+        status,
+        ...(skip > 0 ? { skipped: fromHalves(skip) } : {}),
+      });
     }
 
     // Step D: daily snapshot.
@@ -559,7 +588,7 @@ export function supplyToLast(
   regimens: readonly RegimenInput[],
   supply: { date: ISODate; recordedAt?: number },
   until: ISODate,
-  options: Pick<SimulateOptions, "pauses" | "counts" | "packs"> = {},
+  options: Pick<SimulateOptions, "pauses" | "counts" | "packs" | "skips"> = {},
 ): number | null {
   const from = toDayNum(supply.date);
   const last = toDayNum(until);

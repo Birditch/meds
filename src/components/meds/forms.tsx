@@ -5,7 +5,7 @@ import { useId, useMemo, useState, useTransition, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { fmtPacks, formatRegimenShort, fmtQty, packNote, startsTaking } from "@/lib/meds/format";
+import { fmtPacks, formatRegimenShort, fmtQty, packNote, skipsOf, startsTaking } from "@/lib/meds/format";
 import { addDays, fmtDate, fmtDay, weekdayCN, type ISODate } from "@/lib/meds/dates";
 import { balanceAt, regimenAt, simulate, supplyToLast, type DateRange } from "@/lib/meds/simulate";
 import { clinicDayOnOrBefore, usualNextVisit } from "@/lib/meds/visits";
@@ -158,7 +158,7 @@ export function SupplyForm({
 
   const needed = useMemo(() => {
     if (!med || !byDate) return null;
-    const options = { pauses, counts: med.counts, packs: med.packs.map((p) => p.id) };
+    const options = { pauses, counts: med.counts, packs: med.packs.map((p) => p.id), skips: skipsOf(med) };
     const quantity = supplyToLast(med.supplies, med.regimens, { date, recordedAt: openedAt }, end, options);
     const have = balanceAt(simulate(med.supplies, med.regimens, { ...options, until: end, maxYears: 0 }), { date, slotsDone: 0 });
     return { quantity, have };

@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { isValidISODate } from "./dates";
 import { normalizeTags } from "./tags";
-import { PACK_UNITS } from "./types";
+import { SLOTS } from "./simulate";
+import { MISSED_DOSE_KEPT, PACK_UNITS, RESERVE_USE_REASONS } from "./types";
 
 const isHalfStep = (n: number) => Number.isInteger(n * 2);
 
@@ -103,6 +104,23 @@ const sourceSchema = text("药品来源", 200).min(1, "请填写药品来源");
 /** Pills taken out of a reserve on a day. */
 export const reserveDrawSchema = reserveEntrySchema.extend({ source: sourceSchema });
 
+/** Pills used up straight from a reserve on a day: why (其他 needs a note), and anything written down. */
+export const reserveUseSchema = reserveEntrySchema
+  .extend({
+    reason: z.enum(RESERVE_USE_REASONS, { error: "请选择消耗原因" }),
+    note: text("备注", 200).nullish().transform((v) => v || null),
+  })
+  .refine((u) => u.reason !== "other" || u.note, { message: "选了“其他”，请在备注里写明原因", path: ["note"] });
+
+/** 漏服: (part of) a dose not taken, and where its pills went (`packId`: whose reserve, when there). */
+export const missedDoseSchema = z.object({
+  date: dateSchema,
+  slot: z.enum(SLOTS, { error: "请选择哪一顿没吃" }),
+  quantity: quantitySchema,
+  kept: z.enum(MISSED_DOSE_KEPT, { error: "请选择没吃的药放到哪里" }),
+  packId: z.number().int().positive().nullish().transform((v) => v ?? null),
+});
+
 /** How many pills to take out of each pack's reserve when a medication starts being taken. */
 export const reserveDrawsSchema = z
   .array(z.object({ packId: z.number().int().positive(), quantity: quantitySchema, source: sourceSchema }))
@@ -163,6 +181,8 @@ export type RegimenFields = z.infer<typeof regimenSchema>;
 export type StayFields = z.infer<typeof staySchema>;
 export type ReserveEntryFields = z.infer<typeof reserveEntrySchema>;
 export type ReserveDrawFields = z.infer<typeof reserveDrawSchema>;
+export type ReserveUseFields = z.input<typeof reserveUseSchema>;
+export type MissedDoseFields = z.input<typeof missedDoseSchema>;
 export type ReserveDrawsFields = z.infer<typeof reserveDrawsSchema>;
 export type CreateMedicationFields = z.input<typeof createMedicationSchema>;
 export type ImportFields = z.input<typeof importSchema>;

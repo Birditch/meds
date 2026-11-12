@@ -2,7 +2,7 @@ import "server-only";
 
 import { asc } from "drizzle-orm";
 import { getDb } from "@/db";
-import { dosageRegimens, hospitalStays, medicationPacks, medications, reserveLogs, stockCounts, supplyLogs, visits } from "@/db/schema";
+import { dosageRegimens, hospitalStays, medicationPacks, medications, missedDoses, reserveLogs, stockCounts, supplyLogs, visits } from "@/db/schema";
 import { pinyinKeys } from "./pinyin";
 import { sortTags, tagSearchWords } from "./tags";
 import type { CountRecord, MedicationRecord, PackRecord, StayRecord, VisitRecord } from "./types";
@@ -10,16 +10,18 @@ import type { CountRecord, MedicationRecord, PackRecord, StayRecord, VisitRecord
 /** Every medication with its full history. The data set is one household's, so load it whole. */
 export async function listMedications(): Promise<MedicationRecord[]> {
   const db = getDb();
-  const [meds, packs, supplies, counts, regimens, logs] = await Promise.all([
+  const [meds, packs, supplies, counts, regimens, logs, misses] = await Promise.all([
     db.select().from(medications).orderBy(asc(medications.id)),
     db.select().from(medicationPacks).orderBy(asc(medicationPacks.position), asc(medicationPacks.id)),
     db.select().from(supplyLogs).orderBy(asc(supplyLogs.date), asc(supplyLogs.id)),
     db.select().from(stockCounts).orderBy(asc(stockCounts.date), asc(stockCounts.createdAt)),
     db.select().from(dosageRegimens).orderBy(asc(dosageRegimens.effectiveFrom)),
     db.select().from(reserveLogs).orderBy(asc(reserveLogs.date), asc(reserveLogs.id)),
+    db.select().from(missedDoses).orderBy(asc(missedDoses.date), asc(missedDoses.id)),
   ]);
   const drawn = new Set(logs.map((l) => l.supplyLogId));
   const sourceOf = new Map(supplies.map((s) => [s.id, s.source]));
+  const reserveOfMiss = new Map(logs.flatMap((l) => (l.missedDoseId === null ? [] : [[l.missedDoseId, l.packId] as const])));
 
   const packsOf = new Map<number, PackRecord[]>();
   for (const p of packs) {
@@ -50,6 +52,7 @@ export async function listMedications(): Promise<MedicationRecord[]> {
           supplies: [],
           counts: [],
           reserveLogs: [],
+          misses: [],
           regimens: [],
           searchKeys: [
             ...pinyinKeys(m.name),
@@ -73,7 +76,18 @@ export async function listMedications(): Promise<MedicationRecord[]> {
     });
   }
   for (const l of logs) {
-    byId.get(l.medicationId)?.reserveLogs.push({ id: l.id, date: l.date, kind: l.kind, delta: l.delta, packId: l.packId, recordedAt: l.createdAt.getTime(), source: l.supplyLogId === null ? null : (sourceOf.get(l.supplyLogId) ?? null) });
+    byId.get(l.medicationId)?.reserveLogs.push({ id: l.id, date: l.date, kind: l.kind, delta: l.delta, packId: l.packId, recordedAt: l.createdAt.getTime(), source: l.supplyLogId === null ? null : (sourceOf.get(l.supplyLogId) ?? null), reason: l.reason, note: l.note, missedDoseId: l.missedDoseId });
+  }
+  for (const x of misses) {
+    byId.get(x.medicationId)?.misses.push({
+      id: x.id,
+      date: x.date,
+      slot: x.slot,
+      quantity: x.quantity,
+      kept: x.kept,
+      packId: reserveOfMiss.get(x.id) ?? null,
+      recordedAt: x.createdAt.getTime(),
+    });
   }
   for (const c of counts) {
     byId.get(c.medicationId)?.counts.push({

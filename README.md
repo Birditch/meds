@@ -76,9 +76,23 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   manufacturer. The app only says how many whole days they would last on today's regimen.
   "补进储备" records a dated refill of the reserve, "取用到当前" moves pills from the reserve into the
   stock as one supply log of that manufacturer, with a required 药品来源 (where they came from) printed
-  in the purchase records of the visit and stock PDFs, "盘点储备" replaces the number with a count, and
-  "当前转入储备" moves pills back from the stock (recorded as a stock count of what stays).
-  Every change is listed under 储备记录 in the detail view and can be undone there.
+  in the purchase records of the visit and stock PDFs, "消耗储备" records pills that left the
+  reserve without entering the stock, on a chosen date (not later than today) and with a required
+  reason: 额外服用 (beyond the regimen), 带走备用 (carried away or kept elsewhere), 过期处理, 损坏丢弃,
+  遗失, 给了别人, 退药, or 其他 (which needs a note; any reason can take one). The stock and the
+  projection are untouched, and it cannot take more than the reserve holds. "盘点储备" replaces the
+  number with a count, and "当前转入储备" moves pills back from the stock (recorded as a stock count
+  of what stays). Every change is listed under 储备记录 in the detail view, where 新增 offers
+  补进储备 and 消耗储备, and can be undone there.
+- **Missed doses (漏服)** (记漏服 under the card's regimen, or 漏服记录 in the detail view): a day
+  (not later than today), one of its scheduled slots (早 / 中 / 晚; none on a hospital day, each at
+  most once), how many of its pills were not taken (the whole dose by default), and where they
+  went: **留在当前余量** (that slot takes that much less from the stock, so 能吃到 moves later),
+  **放进储备** (the stock goes down as if taken and that manufacturer's reserve goes up, listed as
+  漏服放入 under 储备记录; only pills the stock still had at that slot), or **不补回** (pills lost or
+  thrown away: the stock goes down as if taken, only the record is kept). The card shows today's
+  missed doses. Undoing one counts the dose as taken again and takes back what it put in the
+  reserve; undoing its 漏服放入 entry undoes the missed dose with it.
 - **Where a refill goes**: a medication not being taken has no current stock to add to, so its
   补药 goes to the reserve (the server refuses a stock supply for it), and so does the initial
   amount of a new medication created without a regimen. One being taken offers 新开的药,
@@ -127,7 +141,8 @@ earliest record with `balance = 0`, for each day `d`:
 1. **Supply** — add every `+N` logged on `d` (one entered after that day's count waits for it).
 2. **Regimen** — the latest regimen with `effectiveFrom <= d` (none yet → doses are 0). On a
    hospital-stay day every dose is 0.
-3. **Doses, 早 → 中 → 晚** — a slot with dose `0` is skipped; if `balance >= dose` it is taken in
+3. **Doses, 早 → 中 → 晚** — a missed dose kept in the stock takes its pills off that slot's dose
+   first; a slot with dose `0` is skipped; if `balance >= dose` it is taken in
    full; if `0 < balance < dose` the remainder is taken as a partial dose and `balance` becomes 0;
    if `balance == 0` the slot is missed. Stock never goes negative, and a later refill resumes it.
    A **count** replaces `balance` once its number of slots is behind (0 = before 早), then adds

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { reserveDrawSchema, reserveDrawsSchema } from "./validation";
+import { RESERVE_USE_REASONS } from "./types";
+import { missedDoseSchema, reserveDrawSchema, reserveDrawsSchema, reserveUseSchema } from "./validation";
 
 const message = (r: { success: boolean; error?: { issues: { message: string }[] } }) => r.error?.issues[0]?.message;
 
@@ -18,5 +19,51 @@ describe("taking pills out of the reserve needs a source", () => {
 
   it("refuses one too long to print", () => {
     expect(message(reserveDrawSchema.safeParse({ ...draw, source: "药".repeat(201) }))).toBe("药品来源最多 200 个字");
+  });
+});
+
+describe("using pills up straight from the reserve", () => {
+  const use = { date: "2026-11-10", quantity: 2, reason: "expired" };
+
+  it("needs a reason from the list", () => {
+    expect(message(reserveUseSchema.safeParse({ date: use.date, quantity: 2 }))).toBe("请选择消耗原因");
+    expect(message(reserveUseSchema.safeParse({ ...use, reason: "eaten" }))).toBe("请选择消耗原因");
+    for (const reason of RESERVE_USE_REASONS.filter((r) => r !== "other")) expect(reserveUseSchema.safeParse({ ...use, reason }).success).toBe(true);
+  });
+
+  it("needs a note for 其他", () => {
+    expect(message(reserveUseSchema.safeParse({ ...use, reason: "other" }))).toBe("选了“其他”，请在备注里写明原因");
+    expect(message(reserveUseSchema.safeParse({ ...use, reason: "other", note: "  " }))).toBe("选了“其他”，请在备注里写明原因");
+    expect(reserveUseSchema.parse({ ...use, reason: "other", note: "送去做药检" }).note).toBe("送去做药检");
+  });
+
+  it("takes an optional note, trimmed, blank meaning none", () => {
+    expect(reserveUseSchema.parse({ ...use, note: "  出差带走 " }).note).toBe("出差带走");
+    expect(reserveUseSchema.parse({ ...use, note: "   " }).note).toBeNull();
+    expect(reserveUseSchema.parse(use).note).toBeNull();
+    // What the form sends after parsing is accepted again by the action.
+    expect(reserveUseSchema.parse(reserveUseSchema.parse(use))).toEqual({ ...use, note: null });
+  });
+
+  it("is written as a positive amount, half pills allowed", () => {
+    expect(reserveUseSchema.parse({ ...use, quantity: 0.5 }).quantity).toBe(0.5);
+    expect(message(reserveUseSchema.safeParse({ ...use, quantity: -2 }))).toBe("数量必须大于 0");
+    expect(message(reserveUseSchema.safeParse({ ...use, note: "药".repeat(201) }))).toBe("备注最多 200 个字");
+  });
+});
+
+describe("a missed dose", () => {
+  const missed = { date: "2026-11-10", slot: "evening", quantity: 1, kept: "stock" };
+
+  it("names the slot and where the pills went", () => {
+    expect(missedDoseSchema.parse(missed)).toEqual({ ...missed, packId: null });
+    expect(missedDoseSchema.parse({ ...missed, kept: "reserve", packId: 3 }).packId).toBe(3);
+    expect(message(missedDoseSchema.safeParse({ ...missed, slot: "night" }))).toBe("请选择哪一顿没吃");
+    expect(message(missedDoseSchema.safeParse({ ...missed, kept: undefined }))).toBe("请选择没吃的药放到哪里");
+  });
+
+  it("is a positive amount in half pills", () => {
+    expect(message(missedDoseSchema.safeParse({ ...missed, quantity: 0 }))).toBe("数量必须大于 0");
+    expect(message(missedDoseSchema.safeParse({ ...missed, quantity: 0.3 }))).toBe("数量只能是整数或 0.5 的倍数");
   });
 });

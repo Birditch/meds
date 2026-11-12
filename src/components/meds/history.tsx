@@ -18,11 +18,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { addDays, fmtDate, type ISODate } from "@/lib/meds/dates";
-import { COUNT_MOMENT_LABEL, fmtQty, formatRegimen, intakeAt, isTaking, packNote } from "@/lib/meds/format";
+import { COUNT_MOMENT_LABEL, RESERVE_USE_REASON, SLOT_NAME, fmtQty, formatRegimen, intakeAt, isTaking, packNote } from "@/lib/meds/format";
 import { regimenAt, type DateRange } from "@/lib/meds/simulate";
-import type { ActionResult, CountRecord, MedicationRecord, ReserveLogKind, ReserveLogRecord, SupplyRecord } from "@/lib/meds/types";
+import type { ActionResult, CountRecord, MedicationRecord, MissedDoseRecord, ReserveLogKind, ReserveLogRecord, SupplyRecord } from "@/lib/meds/types";
 import { RegimenForm, SupplyForm } from "./forms";
-import { ReserveForms } from "./medication-dialogs";
+import { ModeTabs, ReserveForms } from "./medication-dialogs";
 
 export function ConfirmDelete({
   title,
@@ -71,7 +71,7 @@ export function ConfirmDelete({
   );
 }
 
-function SectionHeader({ title, hint, onAdd, adding }: { title: string; hint: string; onAdd?: () => void; adding: boolean }) {
+export function SectionHeader({ title, hint, onAdd, adding }: { title: string; hint: string; onAdd?: () => void; adding: boolean }) {
   return (
     <div className="flex items-center justify-between gap-2">
       <div>
@@ -236,6 +236,8 @@ const RESERVE_LOG_LABEL: Record<ReserveLogKind, string> = {
   draw: "取用到当前",
   count: "盘点",
   transfer: "从当前转入",
+  use: "消耗",
+  missed: "漏服放入",
 };
 
 /** What undoing an entry will do. */
@@ -250,19 +252,32 @@ function undoEffect({ kind, delta }: ReserveLogRecord): string {
       return `储备${delta > 0 ? "减少" : "增加"} ${pills} 颗，回到这次盘点之前的数。`;
     case "transfer":
       return `${pills} 颗从储备退回当前余量。`;
+    case "use":
+      return `${pills} 颗退回储备。`;
+    case "missed":
+      return `储备减少 ${pills} 颗，对应的漏服记录一起删除：那一顿按已经吃了算。`;
   }
 }
+
+const HISTORY_TABS = [
+  ["restock", "补进储备"],
+  ["use", "消耗储备"],
+] as const;
 
 /** Every recorded change to the reserve, newest first, each one undoable. */
 export function ReserveHistory({ medication, today }: { medication: MedicationRecord; today: ISODate }) {
   const [adding, setAdding] = useState(false);
+  const [addTab, setAddTab] = useState<"restock" | "use">("restock");
+  // Nothing to use up when the reserve is empty.
+  const tab = medication.reserve > 0 ? addTab : "restock";
   const rows = [...medication.reserveLogs].sort((a, b) => (a.date === b.date ? b.recordedAt - a.recordedAt || b.id - a.id : a.date < b.date ? 1 : -1));
   return (
     <section className="grid content-start gap-3">
       <SectionHeader title="储备记录" hint={`现有储备 ${fmtQty(medication.reserve)} 颗`} adding={adding} onAdd={() => setAdding((v) => !v)} />
       {adding && (
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <ReserveForms medication={medication} tab="restock" today={today} onDone={() => setAdding(false)} />
+        <div className="grid gap-3 rounded-lg border bg-muted/30 p-3">
+          {medication.reserve > 0 && <ModeTabs label="储备记录类型" tabs={HISTORY_TABS} value={tab} onChange={setAddTab} />}
+          <ReserveForms key={tab} medication={medication} tab={tab} today={today} onDone={() => setAdding(false)} />
         </div>
       )}
       {rows.length === 0 && !adding && (
@@ -276,6 +291,7 @@ export function ReserveHistory({ medication, today }: { medication: MedicationRe
               <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-2">
                 <span className="tabular-nums">{fmtDate(r.date)}</span>
                 <Badge variant="secondary">{RESERVE_LOG_LABEL[r.kind]}</Badge>
+                {r.reason && <Badge variant="outline">{RESERVE_USE_REASON[r.reason].label}</Badge>}
                 {medication.packs.length > 1 && (
                   <span className="truncate text-xs text-muted-foreground">{medication.packs.find((p) => p.id === r.packId)?.brand ?? "未写厂家"}</span>
                 )}
@@ -287,12 +303,23 @@ export function ReserveHistory({ medication, today }: { medication: MedicationRe
                   onConfirm={() => deleteReserveLog(r.id)}
                 />
                 {r.source && <p className="w-full text-xs break-words text-muted-foreground">来源：{r.source}</p>}
+                {r.note && <p className="w-full text-xs break-words text-muted-foreground">备注：{r.note}</p>}
+                {r.missedDoseId !== null && <MissedNote miss={medication.misses.find((x) => x.id === r.missedDoseId)} />}
               </li>
             );
           })}
         </ul>
       )}
     </section>
+  );
+}
+
+function MissedNote({ miss }: { miss: MissedDoseRecord | undefined }) {
+  if (!miss) return null;
+  return (
+    <p className="w-full text-xs text-muted-foreground">
+      {fmtDate(miss.date)} {SLOT_NAME[miss.slot]}没吃的药
+    </p>
   );
 }
 

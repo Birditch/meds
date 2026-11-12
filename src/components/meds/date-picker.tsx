@@ -21,6 +21,7 @@ export function DatePicker({
   value,
   onChange,
   today,
+  max,
 }: {
   id?: string;
   /** Accessible name; the visible text is the date itself. */
@@ -28,6 +29,8 @@ export function DatePicker({
   value: ISODate;
   onChange: (value: ISODate) => void;
   today: ISODate;
+  /** The last day that can be picked, when later ones make no sense. */
+  max?: ISODate;
 }) {
   const [open, setOpen] = useState(false);
   const selected = toLocalDate(value);
@@ -47,6 +50,7 @@ export function DatePicker({
           selected={selected}
           defaultMonth={selected}
           today={toLocalDate(today)}
+          disabled={max ? { after: toLocalDate(max) } : undefined}
           captionLayout="dropdown"
           startMonth={new Date(2000, 0)}
           endMonth={new Date(2100, 11)}
