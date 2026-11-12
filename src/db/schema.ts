@@ -132,26 +132,29 @@ export const reserveLogs = pgTable(
     date: date({ mode: "string" }).notNull(),
     /**
      * restock: bought into the reserve; draw: taken into the stock; count: corrected; transfer: moved
-     * from the stock; use: used up straight from the reserve (never part of the stock); missed: the
-     * pills of a dose not taken, put into the reserve.
+     * from the stock; take: taken (eaten) straight from the reserve; use: left the reserve otherwise
+     * (never part of the stock); missed: the pills of a dose not taken, put into the reserve.
      */
-    kind: text({ enum: ["restock", "draw", "count", "transfer", "use", "missed"] }).notNull(),
+    kind: text({ enum: ["restock", "draw", "count", "transfer", "take", "use", "missed"] }).notNull(),
     delta: numeric({ precision: 10, scale: 1, mode: "number" }).notNull(),
     supplyLogId: integer().references(() => supplyLogs.id, { onDelete: "set null" }),
     stockCountId: integer().references(() => stockCounts.id, { onDelete: "set null" }),
     missedDoseId: integer().references(() => missedDoses.id, { onDelete: "set null" }),
-    /** A use: why the pills left the reserve (RESERVE_USE_REASONS), and anything written down about it. */
-    reason: text({ enum: ["extra", "carry", "expired", "damaged", "lost", "given", "returned", "other"] }),
+    /** A take: when in the day (RESERVE_TAKE_TIMES). */
+    timeOfDay: text({ enum: ["morning", "noon", "evening", "bedtime"] }),
+    /** A use: why the pills left the reserve (RESERVE_USE_REASONS). A take or a use: anything written down. */
+    reason: text({ enum: ["carry", "expired", "damaged", "lost", "given", "returned", "other"] }),
     note: text(),
     createdAt: timestamp({ withTimezone: true, mode: "date" }).notNull().defaultNow(),
   },
   (t) => [
     index("reserve_logs_medication_date_idx").on(t.medicationId, t.date),
-    check("reserve_logs_kind", sql`${t.kind} in ('restock', 'draw', 'count', 'transfer', 'use', 'missed')`),
+    check("reserve_logs_kind", sql`${t.kind} in ('restock', 'draw', 'count', 'transfer', 'take', 'use', 'missed')`),
     check(
       "reserve_logs_reason",
-      sql`${t.reason} is null or ${t.reason} in ('extra', 'carry', 'expired', 'damaged', 'lost', 'given', 'returned', 'other')`,
+      sql`${t.reason} is null or ${t.reason} in ('carry', 'expired', 'damaged', 'lost', 'given', 'returned', 'other')`,
     ),
+    check("reserve_logs_time_of_day", sql`${t.timeOfDay} is null or ${t.timeOfDay} in ('morning', 'noon', 'evening', 'bedtime')`),
     check("reserve_logs_delta_non_zero", sql`${t.delta} <> 0`),
     check("reserve_logs_delta_half_step", halfStep("delta")),
   ],

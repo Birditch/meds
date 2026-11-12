@@ -18,11 +18,15 @@ export interface SupplyRecord {
   source: string | null;
 }
 
-export const RESERVE_LOG_KINDS = ["restock", "draw", "count", "transfer", "use", "missed"] as const;
+export const RESERVE_LOG_KINDS = ["restock", "draw", "count", "transfer", "take", "use", "missed"] as const;
 export type ReserveLogKind = (typeof RESERVE_LOG_KINDS)[number];
 
-/** Why pills left the reserve without entering the stock (消耗储备); labels in format.ts. */
-export const RESERVE_USE_REASONS = ["extra", "carry", "expired", "damaged", "lost", "given", "returned", "other"] as const;
+/** When pills were taken straight from the reserve (服用); labels in format.ts. */
+export const RESERVE_TAKE_TIMES = ["morning", "noon", "evening", "bedtime"] as const;
+export type ReserveTakeTime = (typeof RESERVE_TAKE_TIMES)[number];
+
+/** Why pills left the reserve without being taken or entering the stock (消耗储备); labels in format.ts. */
+export const RESERVE_USE_REASONS = ["carry", "expired", "damaged", "lost", "given", "returned", "other"] as const;
 export type ReserveUseReason = (typeof RESERVE_USE_REASONS)[number];
 
 /** One change to a pack's reserve. */
@@ -36,9 +40,11 @@ export interface ReserveLogRecord {
   recordedAt: number;
   /** A draw: where the pills came from, when recorded. */
   source: string | null;
+  /** A take: when in the day the pills were taken. */
+  timeOfDay: ReserveTakeTime | null;
   /** A use: why the pills left the reserve. */
   reason: ReserveUseReason | null;
-  /** A use: anything written down about it. */
+  /** A take or a use: anything written down about it. */
   note: string | null;
   /** A missed dose put into the reserve (MissedDoseRecord.id). */
   missedDoseId: number | null;

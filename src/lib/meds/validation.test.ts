@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { RESERVE_USE_REASONS } from "./types";
-import { missedDoseSchema, reserveDrawSchema, reserveDrawsSchema, reserveUseSchema } from "./validation";
+import { takeTimeAt } from "./format";
+import { missedDoseSchema, reserveDrawSchema, reserveDrawsSchema, reserveTakeSchema, reserveUseSchema } from "./validation";
 
 const message = (r: { success: boolean; error?: { issues: { message: string }[] } }) => r.error?.issues[0]?.message;
 
@@ -22,12 +23,36 @@ describe("taking pills out of the reserve needs a source", () => {
   });
 });
 
+describe("taking pills straight from the reserve", () => {
+  const take = { date: "2026-11-12", quantity: 1, timeOfDay: "bedtime" };
+
+  it("needs when in the day, takes an optional note", () => {
+    expect(reserveTakeSchema.parse(take)).toEqual({ ...take, note: null });
+    expect(reserveTakeSchema.parse({ ...take, note: " 睡不着 " }).note).toBe("睡不着");
+    expect(message(reserveTakeSchema.safeParse({ ...take, timeOfDay: undefined }))).toBe("请选择什么时候吃的");
+    expect(message(reserveTakeSchema.safeParse({ ...take, quantity: 0 }))).toBe("数量必须大于 0");
+  });
+
+  it("guesses the time of day from the clock", () => {
+    expect([7 * 60, 11 * 60, 15 * 60 + 59, 18 * 60, 21 * 60, 23 * 60 + 59].map(takeTimeAt)).toEqual([
+      "morning",
+      "noon",
+      "noon",
+      "evening",
+      "bedtime",
+      "bedtime",
+    ]);
+  });
+});
+
 describe("using pills up straight from the reserve", () => {
   const use = { date: "2026-11-10", quantity: 2, reason: "expired" };
 
   it("needs a reason from the list", () => {
     expect(message(reserveUseSchema.safeParse({ date: use.date, quantity: 2 }))).toBe("请选择消耗原因");
     expect(message(reserveUseSchema.safeParse({ ...use, reason: "eaten" }))).toBe("请选择消耗原因");
+    // Taking pills is 服用, not a reason to use them up.
+    expect(message(reserveUseSchema.safeParse({ ...use, reason: "extra" }))).toBe("请选择消耗原因");
     for (const reason of RESERVE_USE_REASONS.filter((r) => r !== "other")) expect(reserveUseSchema.safeParse({ ...use, reason }).success).toBe(true);
   });
 

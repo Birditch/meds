@@ -10,7 +10,7 @@ import { checkAccess } from "@/lib/access";
 import { fmtDate, wallClock } from "@/lib/meds/dates";
 import { intakeAt, isTaking } from "@/lib/meds/format";
 import { SLOTS, SLOT_LABEL, dailyTotal, momentAt, packBalancesAt, regimenAt, simulate, type Moment } from "@/lib/meds/simulate";
-import type { ActionResult, ReserveLogKind, ReserveUseReason } from "@/lib/meds/types";
+import type { ActionResult, ReserveLogKind, ReserveTakeTime, ReserveUseReason } from "@/lib/meds/types";
 import {
   catalogTagsSchema,
   createMedicationSchema,
@@ -23,6 +23,7 @@ import {
   quantitySchema,
   regimenSchema,
   reserveDrawSchema,
+  reserveTakeSchema,
   reserveUseSchema,
   reserveDrawsSchema,
   reserveEntrySchema,
@@ -37,6 +38,7 @@ import {
   type PackFields,
   type RegimenFields,
   type ReserveDrawFields,
+  type ReserveTakeFields,
   type ReserveUseFields,
   type ReserveDrawsFields,
   type ReserveEntryFields,
@@ -116,6 +118,7 @@ async function changeReserve(
     supplyLogId?: number;
     stockCountId?: number;
     missedDoseId?: number;
+    timeOfDay?: ReserveTakeTime;
     reason?: ReserveUseReason;
     note?: string | null;
   },
@@ -373,6 +376,20 @@ export async function drawFromReserve(packId: number, input: ReserveDrawFields):
       const pack = await lockPack(tx, id);
       await assertTaking(tx, pack.medicationId);
       await draw(tx, pack, date, quantity, source);
+    });
+  });
+}
+
+/** 服用: pills of a pack taken straight from the reserve (they never enter the current stock). */
+export async function takeFromReserve(packId: number, input: ReserveTakeFields): Promise<ActionResult> {
+  return run(async () => {
+    const id = parse(idSchema, packId);
+    const { date, quantity, timeOfDay, note } = parse(reserveTakeSchema, input);
+    if (date > wallClock().date) throw new UserError("服用日期不能晚于今天");
+    await getDb().transaction(async (tx) => {
+      const pack = await lockPack(tx, id);
+      if (pack.reserve < quantity) throw new UserError(`${pack.brand ?? "这个厂家"}的储备只剩 ${pack.reserve} 颗，不够吃`);
+      await changeReserve(tx, pack, { kind: "take", delta: -quantity, date, timeOfDay, note });
     });
   });
 }

@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { fmtDate, type ISODate } from "@/lib/meds/dates";
 import {
+  RESERVE_TAKE_TIME_LABEL,
   describeReserve,
   describeShortfall,
   fmtQty,
@@ -324,6 +325,7 @@ export function Board(data: MedsData) {
                 onTransfer={() => setPanel({ kind: "reserve", id: m.id, reserveTab: "transfer" })}
                 onDetail={() => setPanel({ kind: "detail", id: m.id })}
                 onMissed={() => setPanel({ kind: "missed", id: m.id })}
+                onTake={() => setPanel({ kind: "reserve", id: m.id, reserveTab: "take" })}
                 today={clock.date}
               />
             );
@@ -395,6 +397,7 @@ function MedicationCard({
   onTransfer,
   onDetail,
   onMissed,
+  onTake,
   today,
 }: {
   medication: MedicationRecord;
@@ -410,6 +413,7 @@ function MedicationCard({
   onTransfer: () => void;
   onDetail: () => void;
   onMissed: () => void;
+  onTake: () => void;
   today: ISODate;
 }) {
   const { conclusion, shortfall } = status;
@@ -420,6 +424,9 @@ function MedicationCard({
   const balanceNote = packNote(status.balanceNow, medication);
   const reserveNote = packNote(medication.reserve, medication);
   const taking = isTaking(intake);
+  const lastTake = medication.reserveLogs
+    .filter((l) => l.kind === "take")
+    .reduce<MedicationRecord["reserveLogs"][number] | null>((a, l) => (!a || l.date > a.date || (l.date === a.date && l.recordedAt > a.recordedAt) ? l : a), null);
   const missedToday = medication.misses.filter((x) => x.date === today).sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot));
   // The status box already says 已停药 / 未设规律: the badge adds when.
   const intakeNote =
@@ -499,6 +506,16 @@ function MedicationCard({
           {medication.reserve > 0 && (
             <span className="text-xs text-muted-foreground">{describeReserve(medication.reserve, status.current)}</span>
           )}
+          {lastTake && (
+            <span className="text-xs text-muted-foreground">
+              最近服用 {fmtDate(lastTake.date)} {lastTake.timeOfDay && RESERVE_TAKE_TIME_LABEL[lastTake.timeOfDay]} {fmtQty(-lastTake.delta)} 颗
+            </span>
+          )}
+          {medication.reserve > 0 && (
+            <button type="button" className="text-xs text-primary underline-offset-4 hover:underline" onClick={onTake}>
+              服用
+            </button>
+          )}
         </Row>
         {next && taking && (
           <Row label={`下次就诊 ${fmtDate(next.date)}`}>
@@ -531,7 +548,7 @@ function MedicationCard({
           <PlusIcon />
           {taking ? "补药" : "补进储备"}
         </Button>
-        <Button size="sm" variant="outline" onClick={onReserve} title="补进储备、取用到当前、记录消耗、盘点或把当前余量转入储备">
+        <Button size="sm" variant="outline" onClick={onReserve} title="补进储备、服用、取用到当前、记录消耗、盘点或把当前余量转入储备">
           <ArchiveIcon />
           管理储备
         </Button>

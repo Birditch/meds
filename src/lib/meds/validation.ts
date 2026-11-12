@@ -2,7 +2,7 @@ import { z } from "zod";
 import { isValidISODate } from "./dates";
 import { normalizeTags } from "./tags";
 import { SLOTS } from "./simulate";
-import { MISSED_DOSE_KEPT, PACK_UNITS, RESERVE_USE_REASONS } from "./types";
+import { MISSED_DOSE_KEPT, PACK_UNITS, RESERVE_TAKE_TIMES, RESERVE_USE_REASONS } from "./types";
 
 const isHalfStep = (n: number) => Number.isInteger(n * 2);
 
@@ -104,11 +104,21 @@ const sourceSchema = text("药品来源", 200).min(1, "请填写药品来源");
 /** Pills taken out of a reserve on a day. */
 export const reserveDrawSchema = reserveEntrySchema.extend({ source: sourceSchema });
 
+const noteSchema = text("备注", 200)
+  .nullish()
+  .transform((v) => v || null);
+
+/** Pills taken (eaten) straight from a reserve: on a day, at a time of day, with an optional note. */
+export const reserveTakeSchema = reserveEntrySchema.extend({
+  timeOfDay: z.enum(RESERVE_TAKE_TIMES, { error: "请选择什么时候吃的" }),
+  note: noteSchema,
+});
+
 /** Pills used up straight from a reserve on a day: why (其他 needs a note), and anything written down. */
 export const reserveUseSchema = reserveEntrySchema
   .extend({
     reason: z.enum(RESERVE_USE_REASONS, { error: "请选择消耗原因" }),
-    note: text("备注", 200).nullish().transform((v) => v || null),
+    note: noteSchema,
   })
   .refine((u) => u.reason !== "other" || u.note, { message: "选了“其他”，请在备注里写明原因", path: ["note"] });
 
@@ -182,6 +192,7 @@ export type StayFields = z.infer<typeof staySchema>;
 export type ReserveEntryFields = z.infer<typeof reserveEntrySchema>;
 export type ReserveDrawFields = z.infer<typeof reserveDrawSchema>;
 export type ReserveUseFields = z.input<typeof reserveUseSchema>;
+export type ReserveTakeFields = z.input<typeof reserveTakeSchema>;
 export type MissedDoseFields = z.input<typeof missedDoseSchema>;
 export type ReserveDrawsFields = z.infer<typeof reserveDrawsSchema>;
 export type CreateMedicationFields = z.input<typeof createMedicationSchema>;
