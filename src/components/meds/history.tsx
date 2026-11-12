@@ -236,7 +236,6 @@ const RESERVE_LOG_LABEL: Record<ReserveLogKind, string> = {
   draw: "取用到当前",
   count: "盘点",
   transfer: "从当前转入",
-  take: "服用",
   use: "消耗",
   missed: "漏服放入",
 };
@@ -253,7 +252,6 @@ function undoEffect({ kind, delta }: ReserveLogRecord): string {
       return `储备${delta > 0 ? "减少" : "增加"} ${pills} 颗，回到这次盘点之前的数。`;
     case "transfer":
       return `${pills} 颗从储备退回当前余量。`;
-    case "take":
     case "use":
       return `${pills} 颗退回储备。`;
     case "missed":
@@ -263,14 +261,13 @@ function undoEffect({ kind, delta }: ReserveLogRecord): string {
 
 const HISTORY_TABS = [
   ["restock", "补进储备"],
-  ["take", "服用"],
   ["use", "消耗储备"],
 ] as const;
 
-/** "近 30 天服用 3 次，共 4 颗" (through today), or null when none. */
+/** "近 30 天服用 3 次，共 4 颗" (已服用 through today), or null when none. */
 function takenLately(logs: readonly ReserveLogRecord[], today: ISODate): string | null {
   const from = addDays(today, -29);
-  const taken = logs.filter((l) => l.kind === "take" && l.date >= from && l.date <= today);
+  const taken = logs.filter((l) => l.reason === "taken" && l.date >= from && l.date <= today);
   if (!taken.length) return null;
   return `近 30 天服用 ${taken.length} 次，共 ${fmtQty(taken.reduce((n, l) => n - l.delta, 0))} 颗`;
 }
@@ -278,7 +275,7 @@ function takenLately(logs: readonly ReserveLogRecord[], today: ISODate): string 
 /** Every recorded change to the reserve, newest first, each one undoable. */
 export function ReserveHistory({ medication, today }: { medication: MedicationRecord; today: ISODate }) {
   const [adding, setAdding] = useState(false);
-  const [addTab, setAddTab] = useState<"restock" | "take" | "use">("restock");
+  const [addTab, setAddTab] = useState<"restock" | "use">("restock");
   // Nothing to use up when the reserve is empty.
   const tab = medication.reserve > 0 ? addTab : "restock";
   const rows = [...medication.reserveLogs].sort((a, b) => (a.date === b.date ? b.recordedAt - a.recordedAt || b.id - a.id : a.date < b.date ? 1 : -1));
@@ -307,8 +304,8 @@ export function ReserveHistory({ medication, today }: { medication: MedicationRe
               <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-2">
                 <span className="tabular-nums">{fmtDate(r.date)}</span>
                 <Badge variant="secondary">{RESERVE_LOG_LABEL[r.kind]}</Badge>
-                {r.timeOfDay && <Badge variant="outline">{RESERVE_TAKE_TIME_LABEL[r.timeOfDay]}</Badge>}
                 {r.reason && <Badge variant="outline">{RESERVE_USE_REASON[r.reason].label}</Badge>}
+                {r.timeOfDay && <span className="text-xs text-muted-foreground">{RESERVE_TAKE_TIME_LABEL[r.timeOfDay]}</span>}
                 {medication.packs.length > 1 && (
                   <span className="truncate text-xs text-muted-foreground">{medication.packs.find((p) => p.id === r.packId)?.brand ?? "未写厂家"}</span>
                 )}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { RESERVE_USE_REASONS } from "./types";
 import { takeTimeAt } from "./format";
-import { missedDoseSchema, reserveDrawSchema, reserveDrawsSchema, reserveTakeSchema, reserveUseSchema } from "./validation";
+import { missedDoseSchema, reserveDrawSchema, reserveDrawsSchema, reserveUseSchema } from "./validation";
 
 const message = (r: { success: boolean; error?: { issues: { message: string }[] } }) => r.error?.issues[0]?.message;
 
@@ -23,14 +23,18 @@ describe("taking pills out of the reserve needs a source", () => {
   });
 });
 
-describe("taking pills straight from the reserve", () => {
-  const take = { date: "2026-11-12", quantity: 1, timeOfDay: "bedtime" };
+describe("taking pills straight from the reserve (已服用)", () => {
+  const take = { date: "2026-11-12", quantity: 1, reason: "taken", timeOfDay: "bedtime" };
 
   it("needs when in the day, takes an optional note", () => {
-    expect(reserveTakeSchema.parse(take)).toEqual({ ...take, note: null });
-    expect(reserveTakeSchema.parse({ ...take, note: " 睡不着 " }).note).toBe("睡不着");
-    expect(message(reserveTakeSchema.safeParse({ ...take, timeOfDay: undefined }))).toBe("请选择什么时候吃的");
-    expect(message(reserveTakeSchema.safeParse({ ...take, quantity: 0 }))).toBe("数量必须大于 0");
+    expect(reserveUseSchema.parse(take)).toEqual({ ...take, note: null });
+    expect(reserveUseSchema.parse({ ...take, note: " 睡不着 " }).note).toBe("睡不着");
+    expect(message(reserveUseSchema.safeParse({ ...take, timeOfDay: undefined }))).toBe("请选择什么时候吃的");
+    expect(message(reserveUseSchema.safeParse({ ...take, timeOfDay: "night" }))).toBeDefined();
+  });
+
+  it("keeps the time of day for 已服用 only", () => {
+    expect(reserveUseSchema.parse({ ...take, reason: "lost" }).timeOfDay).toBeNull();
   });
 
   it("guesses the time of day from the clock", () => {
@@ -46,14 +50,14 @@ describe("taking pills straight from the reserve", () => {
 });
 
 describe("using pills up straight from the reserve", () => {
-  const use = { date: "2026-11-10", quantity: 2, reason: "expired" };
+  const use = { date: "2026-11-10", quantity: 2, reason: "discarded" };
 
   it("needs a reason from the list", () => {
     expect(message(reserveUseSchema.safeParse({ date: use.date, quantity: 2 }))).toBe("请选择消耗原因");
     expect(message(reserveUseSchema.safeParse({ ...use, reason: "eaten" }))).toBe("请选择消耗原因");
-    // Taking pills is 服用, not a reason to use them up.
-    expect(message(reserveUseSchema.safeParse({ ...use, reason: "extra" }))).toBe("请选择消耗原因");
-    for (const reason of RESERVE_USE_REASONS.filter((r) => r !== "other")) expect(reserveUseSchema.safeParse({ ...use, reason }).success).toBe(true);
+    // The reasons merged away are gone.
+    for (const reason of ["extra", "expired", "damaged", "returned"]) expect(message(reserveUseSchema.safeParse({ ...use, reason }))).toBe("请选择消耗原因");
+    for (const reason of RESERVE_USE_REASONS.filter((r) => r !== "other" && r !== "taken")) expect(reserveUseSchema.safeParse({ ...use, reason }).success).toBe(true);
   });
 
   it("needs a note for 其他", () => {
@@ -67,7 +71,7 @@ describe("using pills up straight from the reserve", () => {
     expect(reserveUseSchema.parse({ ...use, note: "   " }).note).toBeNull();
     expect(reserveUseSchema.parse(use).note).toBeNull();
     // What the form sends after parsing is accepted again by the action.
-    expect(reserveUseSchema.parse(reserveUseSchema.parse(use))).toEqual({ ...use, note: null });
+    expect(reserveUseSchema.parse(reserveUseSchema.parse(use))).toEqual({ ...use, timeOfDay: null, note: null });
   });
 
   it("is written as a positive amount, half pills allowed", () => {

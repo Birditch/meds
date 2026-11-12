@@ -28,7 +28,7 @@ import { searchMedications } from "@/lib/meds/search";
 import { SLOTS, SLOT_LABEL } from "@/lib/meds/simulate";
 import { drugKey, groupStrengths, sortStrengths } from "@/lib/meds/similar";
 import { sortTags, tagLabel } from "@/lib/meds/tags";
-import type { MedicationRecord } from "@/lib/meds/types";
+import type { MedicationRecord, ReserveUseReason } from "@/lib/meds/types";
 import { cn } from "@/lib/utils";
 import { daysFromToday } from "@/lib/meds/visits";
 import { BulkImportDialog } from "./bulk-import";
@@ -45,7 +45,7 @@ import { StrengthTabs } from "./strength-tabs";
 import { TONE_CLASS, TagBadges } from "./tags";
 import { useMeds, type MedsData } from "./use-meds";
 
-type Panel = { kind: "supply" | "regimen" | "reserve" | "missed" | "detail"; id: number; reserveTab?: ReserveTab } | null;
+type Panel = { kind: "supply" | "regimen" | "reserve" | "missed" | "detail"; id: number; reserveTab?: ReserveTab; reserveReason?: ReserveUseReason } | null;
 
 /** 在吃 / 未在吃, kept in the URL (`?tab=inactive`) so it survives a reload and can be linked. */
 type Tab = "active" | "inactive";
@@ -325,7 +325,7 @@ export function Board(data: MedsData) {
                 onTransfer={() => setPanel({ kind: "reserve", id: m.id, reserveTab: "transfer" })}
                 onDetail={() => setPanel({ kind: "detail", id: m.id })}
                 onMissed={() => setPanel({ kind: "missed", id: m.id })}
-                onTake={() => setPanel({ kind: "reserve", id: m.id, reserveTab: "take" })}
+                onTake={() => setPanel({ kind: "reserve", id: m.id, reserveTab: "use", reserveReason: "taken" })}
                 today={clock.date}
               />
             );
@@ -348,6 +348,7 @@ export function Board(data: MedsData) {
         medication={open("reserve")}
         status={current ? (statuses.get(current.id) ?? null) : null}
         initialTab={panel?.reserveTab}
+        initialReason={panel?.reserveReason}
         onOpenChange={close}
         today={clock.date}
         {...strengths}
@@ -425,7 +426,7 @@ function MedicationCard({
   const reserveNote = packNote(medication.reserve, medication);
   const taking = isTaking(intake);
   const lastTake = medication.reserveLogs
-    .filter((l) => l.kind === "take")
+    .filter((l) => l.reason === "taken")
     .reduce<MedicationRecord["reserveLogs"][number] | null>((a, l) => (!a || l.date > a.date || (l.date === a.date && l.recordedAt > a.recordedAt) ? l : a), null);
   const missedToday = medication.misses.filter((x) => x.date === today).sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot));
   // The status box already says 已停药 / 未设规律: the badge adds when.

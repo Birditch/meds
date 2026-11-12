@@ -23,7 +23,6 @@ import {
   quantitySchema,
   regimenSchema,
   reserveDrawSchema,
-  reserveTakeSchema,
   reserveUseSchema,
   reserveDrawsSchema,
   reserveEntrySchema,
@@ -38,7 +37,6 @@ import {
   type PackFields,
   type RegimenFields,
   type ReserveDrawFields,
-  type ReserveTakeFields,
   type ReserveUseFields,
   type ReserveDrawsFields,
   type ReserveEntryFields,
@@ -118,7 +116,7 @@ async function changeReserve(
     supplyLogId?: number;
     stockCountId?: number;
     missedDoseId?: number;
-    timeOfDay?: ReserveTakeTime;
+    timeOfDay?: ReserveTakeTime | null;
     reason?: ReserveUseReason;
     note?: string | null;
   },
@@ -380,30 +378,16 @@ export async function drawFromReserve(packId: number, input: ReserveDrawFields):
   });
 }
 
-/** 服用: pills of a pack taken straight from the reserve (they never enter the current stock). */
-export async function takeFromReserve(packId: number, input: ReserveTakeFields): Promise<ActionResult> {
-  return run(async () => {
-    const id = parse(idSchema, packId);
-    const { date, quantity, timeOfDay, note } = parse(reserveTakeSchema, input);
-    if (date > wallClock().date) throw new UserError("服用日期不能晚于今天");
-    await getDb().transaction(async (tx) => {
-      const pack = await lockPack(tx, id);
-      if (pack.reserve < quantity) throw new UserError(`${pack.brand ?? "这个厂家"}的储备只剩 ${pack.reserve} 颗，不够吃`);
-      await changeReserve(tx, pack, { kind: "take", delta: -quantity, date, timeOfDay, note });
-    });
-  });
-}
-
-/** 消耗储备: pills of a pack used up straight from the reserve, and why (they never enter the current stock). */
+/** 消耗储备: pills of a pack that left the reserve straight, and why, 已服用 included (they never enter the current stock). */
 export async function recordReserveUse(packId: number, input: ReserveUseFields): Promise<ActionResult> {
   return run(async () => {
     const id = parse(idSchema, packId);
-    const { date, quantity, reason, note } = parse(reserveUseSchema, input);
+    const { date, quantity, reason, timeOfDay, note } = parse(reserveUseSchema, input);
     if (date > wallClock().date) throw new UserError("消耗日期不能晚于今天");
     await getDb().transaction(async (tx) => {
       const pack = await lockPack(tx, id);
       if (pack.reserve < quantity) throw new UserError(`${pack.brand ?? "这个厂家"}的储备只剩 ${pack.reserve} 颗，不够扣`);
-      await changeReserve(tx, pack, { kind: "use", delta: -quantity, date, reason, note });
+      await changeReserve(tx, pack, { kind: "use", delta: -quantity, date, reason, timeOfDay, note });
     });
   });
 }

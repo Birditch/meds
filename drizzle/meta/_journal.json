@@ -71,6 +71,13 @@
       "when": 1794496994032,
       "tag": "0009_reserve_take",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794497605031,
+      "tag": "0010_reserve_reasons_merged",
+      "breakpoints": true
     }
   ]
 }

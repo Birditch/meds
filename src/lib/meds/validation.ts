@@ -108,19 +108,19 @@ const noteSchema = text("备注", 200)
   .nullish()
   .transform((v) => v || null);
 
-/** Pills taken (eaten) straight from a reserve: on a day, at a time of day, with an optional note. */
-export const reserveTakeSchema = reserveEntrySchema.extend({
-  timeOfDay: z.enum(RESERVE_TAKE_TIMES, { error: "请选择什么时候吃的" }),
-  note: noteSchema,
-});
-
-/** Pills used up straight from a reserve on a day: why (其他 needs a note), and anything written down. */
+/**
+ * Pills that left a reserve straight on a day: why, when in the day for 已服用 (kept for nothing
+ * else), and anything written down (其他 needs it).
+ */
 export const reserveUseSchema = reserveEntrySchema
   .extend({
     reason: z.enum(RESERVE_USE_REASONS, { error: "请选择消耗原因" }),
+    timeOfDay: z.enum(RESERVE_TAKE_TIMES).nullish(),
     note: noteSchema,
   })
-  .refine((u) => u.reason !== "other" || u.note, { message: "选了“其他”，请在备注里写明原因", path: ["note"] });
+  .refine((u) => u.reason !== "taken" || u.timeOfDay, { message: "请选择什么时候吃的", path: ["timeOfDay"] })
+  .refine((u) => u.reason !== "other" || u.note, { message: "选了“其他”，请在备注里写明原因", path: ["note"] })
+  .transform((u) => ({ ...u, timeOfDay: u.reason === "taken" ? (u.timeOfDay ?? null) : null }));
 
 /** 漏服: (part of) a dose not taken, and where its pills went (`packId`: whose reserve, when there). */
 export const missedDoseSchema = z.object({
@@ -192,7 +192,6 @@ export type StayFields = z.infer<typeof staySchema>;
 export type ReserveEntryFields = z.infer<typeof reserveEntrySchema>;
 export type ReserveDrawFields = z.infer<typeof reserveDrawSchema>;
 export type ReserveUseFields = z.input<typeof reserveUseSchema>;
-export type ReserveTakeFields = z.input<typeof reserveTakeSchema>;
 export type MissedDoseFields = z.input<typeof missedDoseSchema>;
 export type ReserveDrawsFields = z.infer<typeof reserveDrawsSchema>;
 export type CreateMedicationFields = z.input<typeof createMedicationSchema>;

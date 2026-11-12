@@ -76,17 +76,16 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   manufacturer. The app only says how many whole days they would last on today's regimen.
   "补进储备" records a dated refill of the reserve, "取用到当前" moves pills from the reserve into the
   stock as one supply log of that manufacturer, with a required 药品来源 (where they came from) printed
-  in the purchase records of the visit and stock PDFs, "服用" (also a link on the card's 药物储备
-  row) records pills taken straight from the reserve: a date (not later than today), when in the
-  day (早上 / 中午 / 晚上 / 睡前, guessed from the clock), how many and an optional note. The card
-  shows the latest one and 储备记录 how many were taken in the last 30 days. "消耗储备" records
-  pills that left the reserve without being taken or entering the stock, on a chosen date and with
-  a required reason: 带走备用 (carried away or kept elsewhere), 过期处理, 损坏丢弃, 遗失, 给了别人,
-  退药, or 其他 (which needs a note; any reason can take one). Neither touches the stock or the
-  projection, and neither can take more than the reserve holds. "盘点储备" replaces the
+  in the purchase records of the visit and stock PDFs, "消耗储备" records pills that left the
+  reserve straight, on a chosen date (not later than today) and with a required reason: **已服用**
+  (taken; then also when in the day, 早上 / 中午 / 晚上 / 睡前, guessed from the clock), 带走
+  (carried away or kept elsewhere), 丢弃 (expired, damaged), 遗失, 送人/退药, or 其他 (which needs
+  a note; any reason can take one). The 服用 link on the card's 药物储备 row opens it with 已服用
+  picked; the card shows the latest one and 储备记录 how many were taken in the last 30 days. It
+  never touches the stock or the projection, and cannot take more than the reserve holds. "盘点储备" replaces the
   number with a count, and "当前转入储备" moves pills back from the stock (recorded as a stock count
   of what stays). Every change is listed under 储备记录 in the detail view, where 新增 offers
-  补进储备, 服用 and 消耗储备, and can be undone there.
+  补进储备 and 消耗储备, and can be undone there.
 - **Missed doses (漏服)** (记漏服 under the card's regimen, or 漏服记录 in the detail view): a day
   (not later than today), one of its scheduled slots (早 / 中 / 晚; none on a hospital day, each at
   most once), how many of its pills were not taken (the whole dose by default), and where they

@@ -29,21 +29,20 @@ import { planHorizon, planVisits, type VisitPlan, type VisitSchedule } from "./v
 /** When a stock count was taken, by how many of the day's doses were behind it. */
 export const COUNT_MOMENT_LABEL = ["早上服药前", "早上服药后", "中午服药后", "晚上服药后"] as const;
 
-/** 服用: when in the day pills were taken from the reserve. */
+/** 已服用: when in the day pills were taken from the reserve. */
 export const RESERVE_TAKE_TIME_LABEL: Record<ReserveTakeTime, string> = { morning: "早上", noon: "中午", evening: "晚上", bedtime: "睡前" };
 
 /** The time of day a minute of the (Beijing) day most likely means: 早上 until 11:00, 中午 until 16:00, 晚上 until 21:00, then 睡前. */
 export const takeTimeAt = (minutes: number): ReserveTakeTime =>
   minutes < 11 * 60 ? "morning" : minutes < 16 * 60 ? "noon" : minutes < 21 * 60 ? "evening" : "bedtime";
 
-/** 消耗储备: why the pills left the reserve without being taken, in the order offered, with what each one covers. */
+/** 消耗储备: why the pills left the reserve, in the order offered, with what each one covers. */
 export const RESERVE_USE_REASON: Record<ReserveUseReason, { label: string; hint: string }> = {
-  carry: { label: "带走备用", hint: "随身带走或放到别处：出差旅行、住院自带、放在单位或另一个家" },
-  expired: { label: "过期处理", hint: "过期或快过期了，丢弃或交到药品回收点" },
-  damaged: { label: "损坏丢弃", hint: "受潮、变色、碎裂、掉在地上或被污染，不能再吃" },
+  taken: { label: "已服用", hint: "从储备里拿来吃了，如按需服用、临时加一颗（按规律吃的从当前余量扣，不用记在这里）" },
+  carry: { label: "带走", hint: "随身带走或放到别处：出差旅行、住院自带、放在单位或另一个家" },
+  discarded: { label: "丢弃", hint: "过期、受潮、变色、碎了、掉地上或被污染，扔掉或交药品回收" },
   lost: { label: "遗失", hint: "丢了或找不到了" },
-  given: { label: "给了别人", hint: "给家人、朋友或其他病友用了" },
-  returned: { label: "退药", hint: "退回医院或药店" },
+  given: { label: "送人/退药", hint: "给了家人朋友或其他病友，或退回医院、药店" },
   other: { label: "其他", hint: "以上都不是：请在备注里写明" },
 };
 
