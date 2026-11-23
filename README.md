@@ -128,8 +128,19 @@ medication is fully covered** — e.g. `能吃到：2027.01.06 周三`, with
   out of it. **药品现有清单**: current stock,
   regimen, run-out day, purchases and counts. **药品储备清单**: the reserve and how long it
   lasts. The visit and stock lists never include the reserve.
-- **Hospital stays (住院)**: no medication is taken from home stock on those days (start and end
-  included), so run-out dates and visit needs move back accordingly.
+- **Hospital stays (住院)**: the doses come from the hospital, so no medication is taken from home
+  stock on those days (start and end included); run-out dates and visit needs move back
+  accordingly. Every list a stay changes says so in full
+  ([`src/lib/meds/stay-effects.ts`](src/lib/meds/stay-effects.ts)): its header names the stays, a
+  **住院说明** section cuts each stay into where its days fall (already behind the stock now,
+  before the visit, in the period the visit covers, after it), a table gives each medication the
+  pills its regimen would have taken on hospital days and every figure next to what it would be
+  without the stays (现在剩, 周三晚剩, 未来 N 周需, 需开 and 少开; on the stock list 现有 and 能吃到,
+  and how many days later), and each medication's own entry walks through the steps with the
+  arithmetic (`17 − 5 = 12 颗`). A count taken during a stay is said to replace the hospital days
+  before it; medications the stays do not touch are named. The visit plan page shows the same:
+  which stays it counted and, per medication, the figures without them and how much less to get.
+  The reserve list notes that a stay under way or to come leaves the reserve untouched.
 - **Stock chart**: vertical jumps on refills, slope changes on regimen changes, a "today" line,
   visit lines, shaded hospital stays, history vs. projection, and a per-slot tooltip.
 - **Fuzzy search** over name, every brand, dosage, tags and their pinyin (full or initials: `ypb` → 药品B).

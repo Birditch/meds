@@ -3,9 +3,11 @@ import "server-only";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import PDFDocument from "pdfkit";
-import { fmtDate, weekdayCN } from "./dates";
+import { diffDays, fmtDate, weekdayCN } from "./dates";
 import { COUNT_MOMENT_LABEL, fmtQty, formatRegimen, formatRegimenShort, hasRecords, intakeLabel, packNote } from "./format";
 import {
+  type StockItem,
+  type VisitItem,
   countLines,
   gapWarning,
   medicationLabel,
@@ -28,6 +30,17 @@ import {
 } from "./reports";
 import type { PdfFontFiles } from "./pdf-fonts";
 import { dailyTotal } from "./simulate";
+import {
+  STAY_RULE,
+  needDelta,
+  needShort,
+  rangeText,
+  stayNoteLines,
+  stayRangeText,
+  stockStayLines,
+  visitStayLines,
+  type StayNote,
+} from "./stay-effects";
 import { visitOrdinal, spanText } from "./visits";
 
 /*
@@ -209,7 +222,8 @@ class Writer {
     const rightWidth = right ? Math.min(170, this.width * 0.4) : 0;
     const leftWidth = this.width - rightWidth - (right ? 8 : 0);
     const h = Math.max(this.measure(text, leftWidth, 11, true), right ? this.measure(right.text, rightWidth, 11, true) : 0);
-    this.ensure(h + 50);
+    // Keep the heading with its first lines.
+    this.ensure(h + 90);
     const y = this.doc.y;
     this.style(11, true).text(text, this.left, y, { width: leftWidth, lineGap: 1 });
     if (right) this.style(11, true, right.color ?? INK).text(right.text, this.left + this.width - rightWidth, y, { width: rightWidth, align: "right", lineGap: 1 });
@@ -223,8 +237,8 @@ class Writer {
     const values = Array.isArray(value) ? value : [value];
     const text = values.join("\n");
     const h = this.measure(text, valueWidth, 9.5);
-    // Long lists may break across pages; keep at least the first lines with the label.
-    this.ensure(Math.min(h, 40));
+    // A field up to a third of a page stays on one page; a longer list may break, keeping its first lines with the label.
+    this.ensure(h <= 260 ? h : 40);
     const y = this.doc.y;
     this.style(9.5, false, MUTED).text(label, this.left, y, { width: labelWidth - 6, lineGap: 1 });
     this.style(9.5, false, color).text(text, this.left + labelWidth, y, { width: valueWidth, lineGap: 1 });
@@ -283,6 +297,156 @@ const pillsCell = (it: ReportItem, of: "stock" | "reserve"): Cell => {
 
 const headline = (it: ReportItem) => it.status.conclusion.headline + (it.status.conclusion.detail ? `（${it.status.conclusion.detail}）` : "");
 
+/* ------------------------------------ hospital stays ------------------------------------ */
+
+/** One header line naming the stays a list has counted. */
+const staysHeader = (notes: readonly StayNote[], today: string) =>
+  `住院：${notes.map((n) => `${rangeText(n.stay, today)}，${n.state}`).join("；")}。住院期间不扣家里的药，下面的数字都已算上（见“住院说明”）`;
+
+/** A number as projected, with what it would be without the stays under it when that differs. */
+const comparedCell = (c: { with: number; without: number }, bold = false): Cell => ({
+  text: `${fmtQty(c.with)} 颗`,
+  sub: c.with === c.without ? null : `不算住院 ${fmtQty(c.without)} 颗`,
+  bold,
+});
+
+/** Pills the regimen would have taken on hospital days, and where those days fall. */
+const notTakenCell = (parts: [string, number][]): Cell => {
+  const total = parts.reduce((n, [, q]) => n + q, 0);
+  const shown = parts.filter(([, q]) => q > 0);
+  return { text: `${fmtQty(total)} 颗`, sub: shown.map(([l, q]) => `${l} ${fmtQty(q)}`).join("\n") || null };
+};
+
+/** The stays, each with where its days fall. */
+function writeStays(w: Writer, notes: readonly StayNote[], today: string) {
+  notes.forEach((n, i) => w.paragraph(stayNoteLines(n, i, today).join("\n")));
+}
+
+/** The medications a stay does not touch, named so nothing is left unexplained. */
+function untouched(items: readonly ReportItem[], affected: ReadonlySet<ReportItem["medication"]>) {
+  const rest = items.filter((it) => it.taking && !affected.has(it.medication));
+  return rest.length
+    ? `另有 ${rest.length} 种在吃的药不受住院影响（住院那几天按规律不吃，或住院后重新盘点过）：${rest.map((it) => `${it.medication.name} ${it.medication.dosage}`).join("、")}。`
+    : null;
+}
+
+function writeVisitStays(w: Writer, r: VisitReport, ctx: RenderContext, leftLabel: string, period: string) {
+  if (!r.stays.length) return;
+  const today = ctx.input.now.date;
+  const visitToday = r.date === today;
+  const items = [...r.needed, ...r.covered];
+  const affected = items.filter((it): it is VisitItem & { stay: NonNullable<VisitItem["stay"]> } => it.stay !== null);
+  w.section("住院说明", `本清单里的“${visitToday ? "现在剩" : leftLabel}”“未来 ${period}需”和“需开”都已按住院算好；下面写明每段住院落在哪里、对每种药各有什么影响。`);
+  w.paragraph(STAY_RULE);
+  writeStays(w, r.stays, today);
+  if (affected.length) {
+    const columns: Column[] = [
+      { header: "#", width: 4, align: "center" },
+      { header: "药品", width: 25 },
+      { header: "住院期间不扣", width: 14, align: "right" },
+      ...(visitToday ? [] : [{ header: "现在剩", width: 13, align: "right" as const }]),
+      { header: leftLabel, width: 13, align: "right" },
+      { header: `未来 ${period}需`, width: 13, align: "right" },
+      { header: "需开", width: 21, align: "right" },
+    ];
+    w.table(
+      { title: `住院对各药的影响（${affected.length} 种）`, note: "每格上面是按住院算的实际数字，下面灰字是“不算住院”时的数字。" },
+      columns,
+      affected.map((it, i) => {
+        const e = it.stay;
+        const { with: got, without: bare } = e.need;
+        const delta = needDelta(e, it.medication.packUnit);
+        return [
+          { text: String(i + 1) },
+          nameCell(it.medication),
+          notTakenCell([
+            ["到现在", e.past.doses],
+            ["复诊前", e.beforeVisit.doses],
+            ["开药期间", e.period.doses],
+          ]),
+          ...(visitToday ? [] : [comparedCell(e.balanceNow)]),
+          comparedCell(e.stockBefore),
+          comparedCell(e.demand),
+          {
+            text: needText(got, it.medication),
+            bold: true,
+            color: got.need > 0 ? ALERT : INK,
+            sub: delta ? `不算住院 ${needShort(bare, it.medication.packUnit)}\n${delta}` : "不算住院也一样",
+          },
+        ];
+      }),
+    );
+    const changed = affected.filter((it) => needDelta(it.stay, it.medication.packUnit));
+    if (changed.length) {
+      w.paragraph(
+        `因为住院，这次有 ${changed.length} 种药开得不一样：${changed
+          .map((it) => `${it.medication.name} ${needDelta(it.stay, it.medication.packUnit)}`)
+          .join("、")}。`,
+        { bold: true },
+      );
+    }
+    const same = affected.filter((it) => !needDelta(it.stay, it.medication.packUnit));
+    if (same.length) {
+      w.paragraph(
+        `${same.length} 种药住院后剩得更多，但开药量不变：${same
+          .map((it) => `${it.medication.name}（${it.need.need === 0 ? "都无需开药" : `都开 ${needShort(it.need, it.medication.packUnit)}`}）`)
+          .join("、")}。`,
+      );
+    }
+  }
+  const rest = untouched(items, new Set(affected.map((it) => it.medication)));
+  if (rest) w.paragraph(rest, { color: MUTED });
+  if (affected.length) {
+    const where = [
+      affected.some((it) => it.need.need > 0) ? "“明细与复购原因”" : null,
+      affected.some((it) => it.need.need === 0) ? "“无需开药的药：住院的影响”" : null,
+    ].filter(Boolean);
+    w.paragraph(`每种药一步步的算法见下面${where.join("和")}里的“住院”一项。`, { color: MUTED });
+  }
+}
+
+function writeStockStays(w: Writer, r: StockReport, ctx: RenderContext) {
+  if (!r.stays.length) return;
+  const today = ctx.input.now.date;
+  const affected = r.items.filter((it): it is StockItem & { stay: NonNullable<StockItem["stay"]> } => it.stay !== null);
+  w.section("住院说明", "本清单里的“现有”和“能吃到”都已按住院算好；下面写明每段住院落在哪里、对每种药各有什么影响。");
+  w.paragraph(STAY_RULE);
+  writeStays(w, r.stays, today);
+  if (affected.length) {
+    w.table(
+      { title: `住院对各药的影响（${affected.length} 种）`, note: "每格上面是按住院算的实际数字，下面灰字是“不算住院”时的数字。" },
+      [
+        { header: "#", width: 4, align: "center" },
+        { header: "药品", width: 30 },
+        { header: "服用规律", width: 15 },
+        { header: "住院期间不扣", width: 15, align: "right" },
+        { header: "现有", width: 14, align: "right" },
+        { header: "能吃到", width: 22 },
+      ],
+      affected.map((it, i) => {
+        const e = it.stay;
+        const { with: last, without: bare } = e.lastFullDay;
+        return [
+          { text: String(i + 1) },
+          nameCell(it.medication),
+          regimenCell(it),
+          notTakenCell([
+            ["到现在", e.past.doses],
+            ["接下来", e.ahead.doses],
+          ]),
+          comparedCell(e.balanceNow, true),
+          last && bare
+            ? { text: fmtDate(last), sub: last === bare ? "不算住院也一样" : `不算住院 ${fmtDate(bare)}\n推后 ${diffDays(last, bare)} 天` }
+            : { text: e.headline.with, sub: e.headline.with === e.headline.without ? null : `不算住院：${e.headline.without}` },
+        ];
+      }),
+    );
+  }
+  const rest = untouched(r.items, new Set(affected.map((it) => it.medication)));
+  if (rest) w.paragraph(rest, { color: MUTED });
+  if (affected.length) w.paragraph("每种药一步步的算法见下面“购买与盘点记录”里的“住院”一项。", { color: MUTED });
+}
+
 const periodLabel = (days: number) => (days % 7 === 0 ? `${days / 7} 周` : `${days} 天`);
 
 export interface RenderContext {
@@ -309,6 +473,7 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
       ? `库存按现在（${COUNT_MOMENT_LABEL[ctx.input.now.slotsDone]}）计算`
       : `库存截止：${fmtDate(r.cutoff)} 晚上服药后`,
     `开药要够：${fmtDate(r.date)} 起，吃到 ${fmtDate(r.coverUntil)} 晚上，共 ${r.estimated ? `${period}（估算）` : spanText(r.days)}`,
+    ...(r.stays.length ? [staysHeader(r.stays, today)] : []),
   ]);
 
   if (r.needed.length || r.covered.length) w.paragraph(`需开药 ${r.needed.length} 种，无需开药 ${r.covered.length} 种。`, { bold: true });
@@ -338,7 +503,8 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
       ]),
     );
 
-    w.section("明细与复购原因");
+    writeVisitStays(w, r, ctx, leftLabel, period);
+    w.section("明细与复购原因", undefined, 160);
     r.needed.forEach((it, i) => {
       const m = it.medication;
       w.itemHeading(`${i + 1}. ${medicationLabel(m)}`, { text: `缺 ${needText(it.need, m)}`, color: ALERT });
@@ -347,6 +513,7 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
       const byPack = packBreakdown(it, "stock");
       if (byPack) w.field("各厂家现有", byPack);
       w.field("复购原因", needReason(it, r, ctx.input.now));
+      if (it.stay) w.field("住院", visitStayLines(it.stay, { ...it.need, index: r.index }, ctx.input.now, m.packUnit));
       const others = otherPacksText(it.need, m);
       w.field("本次开药", others ? [`按${m.brand ? ` ${m.brand} ` : "默认厂家"}：${prescriptionText(it.need, m)}`, others] : prescriptionText(it.need, m));
       const bought = purchaseLines(m, today);
@@ -359,6 +526,7 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
     });
   }
 
+  if (!r.needed.length) writeVisitStays(w, r, ctx, leftLabel, period);
   if (r.covered.length) {
     w.table(
       { title: `本次无需开药（${r.covered.length} 种）` },
@@ -376,11 +544,24 @@ export async function renderVisitPdf(r: VisitReport, ctx: RenderContext): Promis
         { text: `${fmtQty(it.need.demand)} 颗`, sub: it.need.supplied > 0 ? `已记补药 +${fmtQty(it.need.supplied)}` : null },
         {
           text: it.need.demand > 0 ? "够用" : "期间不服用",
-          sub: gapWarning(it, r) ? "但等不到这次就诊就会断药" : null,
+          sub: gapWarning(it, r)
+            ? "但等不到这次就诊就会断药"
+            : it.stay && it.stay.need.without.prescribed !== it.stay.need.with.prescribed
+              ? `因为住院才够；不算住院要开 ${needShort(it.stay.need.without, it.medication.packUnit)}（缺 ${fmtQty(it.stay.need.without.need)} 颗）`
+              : null,
           color: gapWarning(it, r) ? ALERT : INK,
         },
       ]),
     );
+    const touched = r.covered.filter((it) => it.stay);
+    if (touched.length) {
+      w.section("无需开药的药：住院的影响", undefined, 160);
+      touched.forEach((it, i) => {
+        w.itemHeading(`${i + 1}. ${medicationLabel(it.medication)}`, { text: "无需开药" });
+        w.field("住院", visitStayLines(it.stay!, { ...it.need, index: r.index }, ctx.input.now, it.medication.packUnit));
+        w.endItem();
+      });
+    }
   }
 
   // Medications not being taken have nothing to get: left out.
@@ -394,6 +575,7 @@ export async function renderStockPdf(r: StockReport, ctx: RenderContext): Promis
   w.header([
     `截至：${nowText(ctx)}`,
     `共 ${r.items.length} 种药品${r.nextVisit ? `；下次复诊 ${fmtDate(r.nextVisit)}` : ""}`,
+    ...(r.stays.length ? [staysHeader(r.stays, today)] : []),
   ]);
 
   if (!r.items.length) {
@@ -426,7 +608,8 @@ export async function renderStockPdf(r: StockReport, ctx: RenderContext): Promis
   if (taking.length) w.table({ title: `在吃（${taking.length} 种）` }, columns, rows(taking, 0));
   if (inactive.length) w.table({ title: `未在吃（${inactive.length} 种）` }, columns, rows(inactive, taking.length));
 
-  w.section("购买与盘点记录");
+  writeStockStays(w, r, ctx);
+  w.section("购买与盘点记录", undefined, 120);
   r.items.forEach((it, i) => {
     const m = it.medication;
     w.itemHeading(`${i + 1}. ${medicationLabel(m)}`, { text: `现有 ${fmtQty(it.status.balanceNow)} 颗` });
@@ -434,6 +617,7 @@ export async function renderStockPdf(r: StockReport, ctx: RenderContext): Promis
     if (hasRecords(it.status)) w.field("现有药", headline(it));
     const byPack = packBreakdown(it, "stock");
     if (byPack) w.field("各厂家现有", byPack);
+    if (it.stay) w.field("住院", stockStayLines(it.stay, ctx.input.now));
     const bought = purchaseLines(m, today);
     w.field("购买记录", bought.length ? bought : "暂无购买记录");
     const counted = countLines(m);
@@ -449,6 +633,13 @@ export async function renderReservePdf(r: ReserveReport, ctx: RenderContext): Pr
     `截至：${nowText(ctx)}`,
     `有储备 ${r.items.length} 种，无储备 ${r.empty.length} 种`,
   ]);
+
+  if (r.stays.length) {
+    w.section("住院说明");
+    w.paragraph(STAY_RULE);
+    w.paragraph(r.stays.map((n, i) => `${i + 1}. ${stayRangeText(n.stay)}（${n.state}）`).join("\n"));
+    w.paragraph("住院期间储备不会减少。下表“按当前规律可用”指在家服用的天数，住院的日子不算在内：住院几天，储备实际能撑到的日期就相应推后几天。");
+  }
 
   if (r.items.length) {
     w.table(

@@ -21,6 +21,16 @@ import {
   type MedicationStatus,
 } from "./format";
 import { dailyTotal, type Moment } from "./simulate";
+import {
+  overlaps,
+  stockStayEffect,
+  stockStayNotes,
+  visitStayEffect,
+  visitStayNotes,
+  type StayNote,
+  type StockStayEffect,
+  type VisitStayEffect,
+} from "./stay-effects";
 import { isSpecialRx, tagDef, tagLabel } from "./tags";
 import type { MedicationRecord, PackRecord, StayRecord, VisitRecord } from "./types";
 import { scheduleVisits, type VisitNeed } from "./visits";
@@ -38,6 +48,8 @@ export interface ReportItem {
   intake: Intake;
   /** Being taken (or about to start): 在吃. */
   taking: boolean;
+  /** The same projection as if there had been no hospital stay; null without stays. */
+  withoutStays: MedicationStatus | null;
 }
 
 /** Every medication, the ones being taken first (otherwise in the given order). */
@@ -51,6 +63,7 @@ function evaluate(input: ReportInput) {
       status: statusOf(m, input.now, schedule, pauses),
       intake,
       taking: isTaking(intake),
+      withoutStays: pauses.length ? statusOf(m, input.now, schedule, []) : null,
     };
   });
   return { schedule, items: [...items.filter((it) => it.taking), ...items.filter((it) => !it.taking)] };
@@ -153,6 +166,8 @@ export function needText(need: Pick<VisitNeed, "need" | "packs">, m: Pick<Medica
 
 export interface VisitItem extends ReportItem {
   need: VisitNeed;
+  /** How the hospital stays shape its figures; null when they change nothing for it. */
+  stay: VisitStayEffect | null;
 }
 
 export interface VisitReport {
@@ -172,6 +187,8 @@ export interface VisitReport {
   covered: VisitItem[];
   /** Not being taken: nothing to get. */
   inactive: VisitItem[];
+  /** The hospital stays that change something in this list, cut by where their days fall. */
+  stays: StayNote[];
 }
 
 /** The list for one upcoming visit (the next one by default); null when there is no such visit. */
@@ -180,8 +197,20 @@ export function visitReport(input: ReportInput, date?: ISODate): VisitReport | n
   const index = date ? schedule.findIndex((v) => v.date === date) : 0;
   const v = schedule[index];
   if (!v) return null;
-  const all = items.map((it) => ({ ...it, need: it.status.plan.visits[index] }));
+  const all = items.map((it) => ({
+    ...it,
+    need: it.status.plan.visits[index],
+    stay:
+      it.taking && it.withoutStays
+        ? visitStayEffect({ with: it.status, without: it.withoutStays }, it.medication.counts, input.now, index)
+        : null,
+  }));
   const coverUntil = all[0]?.need.coverUntil ?? addDays(v.date, -1);
+  const runs = all.flatMap((it) => (it.stay ? [...it.stay.past.runs, ...it.stay.beforeVisit.runs, ...it.stay.period.runs] : []));
+  // Those that changed something, and any still to come (a later one is said not to count here).
+  const ranges = input.stays
+    .map((s) => ({ start: s.startDate, end: s.endDate }))
+    .filter((s) => overlaps(s, runs) || (s.end >= input.now.date && all.some((it) => it.taking)));
   return {
     date: v.date,
     index,
@@ -193,6 +222,7 @@ export function visitReport(input: ReportInput, date?: ISODate): VisitReport | n
     needed: all.filter((it) => it.need.need > 0),
     covered: all.filter((it) => it.need.need === 0 && it.taking),
     inactive: all.filter((it) => it.need.need === 0 && !it.taking),
+    stays: visitStayNotes(ranges, input.now, { date: v.date, coverUntil }),
   };
 }
 
@@ -224,16 +254,32 @@ export function gapWarning(item: VisitItem, report: VisitReport): string | null 
 
 /* ------------------------------------- stock list ------------------------------------- */
 
+export interface StockItem extends ReportItem {
+  /** How the hospital stays shape its stock and how long it lasts; null when they change nothing. */
+  stay: StockStayEffect | null;
+}
+
 export interface StockReport {
   /** Being taken first, then the rest. */
-  items: ReportItem[];
+  items: StockItem[];
   /** The next visit, for the "需开" column. */
   nextVisit: ISODate | null;
+  /** The hospital stays that change something in this list, cut at now. */
+  stays: StayNote[];
 }
 
 export function stockReport(input: ReportInput): StockReport {
   const { schedule, items } = evaluate(input);
-  return { items, nextVisit: schedule[0]?.date ?? null };
+  const all = items.map((it) => ({
+    ...it,
+    stay:
+      it.taking && it.withoutStays
+        ? stockStayEffect({ with: it.status, without: it.withoutStays }, it.medication.counts, input.now)
+        : null,
+  }));
+  const runs = all.flatMap((it) => (it.stay ? [...it.stay.past.runs, ...it.stay.ahead.runs] : []));
+  const ranges = input.stays.map((s) => ({ start: s.startDate, end: s.endDate })).filter((s) => overlaps(s, runs));
+  return { items: all, nextVisit: schedule[0]?.date ?? null, stays: stockStayNotes(ranges, input.now) };
 }
 
 /** "早 0 · 中 0 · 晚 1（1颗/天）" or "未设置". */
@@ -249,11 +295,15 @@ export interface ReserveReport {
   items: (ReportItem & { lasts: string })[];
   /** Medications with nothing in reserve. */
   empty: MedicationRecord[];
+  /** Hospital stays not over yet: the reserve is not used during them. */
+  stays: StayNote[];
 }
 
 export function reserveReport(input: ReportInput): ReserveReport {
   const { items } = evaluate(input);
+  const open = input.stays.filter((s) => s.endDate >= input.now.date).map((s) => ({ start: s.startDate, end: s.endDate }));
   return {
+    stays: stockStayNotes(open, input.now),
     items: items
       .filter((it) => it.medication.reserve > 0)
       .map((it) => ({ ...it, lasts: describeReserve(it.medication.reserve, it.status.current) })),

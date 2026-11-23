@@ -23,7 +23,8 @@ import {
   visitOrdinal,
   type VisitNeed,
 } from "@/lib/meds/visits";
-import { otherPacksText } from "@/lib/meds/reports";
+import { otherPacksText, type VisitReport } from "@/lib/meds/reports";
+import { needDelta, needShort, rangeText, type StayWhere, type VisitStayEffect } from "@/lib/meds/stay-effects";
 import { isSpecialRx } from "@/lib/meds/tags";
 import { cn } from "@/lib/utils";
 import { DatePicker } from "./date-picker";
@@ -124,6 +125,32 @@ function MonthStartBadge({ date }: { date: ISODate }) {
   );
 }
 
+const WHERE_SHORT: Record<StayWhere, string> = {
+  past: "已过去，没扣家里的药",
+  beforeVisit: "在这次复诊前，不扣家里的药",
+  period: "在这次开药期间，不算在需要量里",
+  after: "在这次开药期间之后，不影响这次",
+  ahead: "还没到",
+};
+
+/** The stays this visit has counted, and where their days fall. */
+function StaysNote({ report }: { report: VisitReport }) {
+  return (
+    <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-950 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-200">
+      <p className="font-medium">已计入住院：住院期间吃医院配发的药，不扣家里的余量。下面的余量和需开都已按此算好。</p>
+      <ul className="mt-1 grid gap-0.5 tabular-nums">
+        {report.stays.map((n) => (
+          <li key={n.stay.start}>
+            {fmtDate(n.stay.start)} – {fmtDate(n.stay.end)}（{n.state}）：
+            {n.parts.map((p) => `${rangeText(p.range, report.date)}${WHERE_SHORT[p.where]}`).join("；")}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 text-sky-900/80 dark:text-sky-200/80">每种药一步步怎么算的，见右上角“开药清单”PDF 里的“住院说明”。</p>
+    </div>
+  );
+}
+
 function NeedCell({ need, medication }: { need: VisitNeed; medication: MedicationRecord }) {
   if (need.need === 0) return <span className="text-muted-foreground">无需开药</span>;
   // The boxes are the default manufacturer's; the others' packs may hold another count.
@@ -155,6 +182,7 @@ export function VisitPlan({
   medications,
   notTaking = 0,
   statuses,
+  stayReports,
   today,
   className,
 }: {
@@ -164,6 +192,8 @@ export function VisitPlan({
   /** How many medications are left out as not being taken. */
   notTaking?: number;
   statuses: Map<number, MedicationStatus>;
+  /** Each upcoming visit's list, for how the hospital stays shape it; empty without stays. */
+  stayReports?: Map<ISODate, VisitReport>;
   today: ISODate;
   className?: string;
 }) {
@@ -243,7 +273,11 @@ export function VisitPlan({
         )}
 
         {upcoming.map((v, i) => {
-          const rows = medications.map((m) => ({ m, need: statuses.get(m.id)?.plan.visits[i] }));
+          const report = stayReports?.get(v.date);
+          const stayOf = new Map<number, VisitStayEffect | null>(
+            [...(report?.needed ?? []), ...(report?.covered ?? [])].map((it) => [it.medication.id, it.stay]),
+          );
+          const rows = medications.map((m) => ({ m, need: statuses.get(m.id)?.plan.visits[i], stay: stayOf.get(m.id) ?? null }));
           const sample = rows.find((r) => r.need)?.need;
           const prev = visits[visits.indexOf(v) - 1]?.date;
           return (
@@ -296,6 +330,7 @@ export function VisitPlan({
                       `，这次开的药要吃到 ${fmtDate(sample.coverUntil)} 晚上（${spanText(diffDays(sample.coverUntil, v.date) + 1)}）`}
                     {sample?.estimated && `；下次按 4 周后的${CLINIC_DAY}估算，添加下一次就诊可按实际间隔算`}
                   </p>
+                  {report && report.stays.length > 0 && <StaysNote report={report} />}
                 </div>
               )}
 
@@ -314,7 +349,7 @@ export function VisitPlan({
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {rows.map(({ m, need }) => (
+                      {rows.map(({ m, need, stay }) => (
                         <tr key={m.id}>
                           <td className="py-1.5 pr-3 align-top">
                             {m.name}
@@ -330,6 +365,9 @@ export function VisitPlan({
                                 {packNote(need.stockBefore, m) && (
                                   <span className="text-xs text-muted-foreground">{packNote(need.stockBefore, m)}</span>
                                 )}
+                                {stay && stay.stockBefore.without !== stay.stockBefore.with && (
+                                  <span className="text-xs text-sky-700 dark:text-sky-300">不算住院 {fmtQty(stay.stockBefore.without)} 颗</span>
+                                )}
                               </span>
                             ) : (
                               "—"
@@ -337,6 +375,11 @@ export function VisitPlan({
                           </td>
                           <td className="py-1.5 text-right align-top tabular-nums">
                             {need ? <NeedCell need={need} medication={m} /> : "—"}
+                            {stay && needDelta(stay, m.packUnit) && (
+                              <span className="block text-xs text-sky-700 dark:text-sky-300">
+                                不算住院 {needShort(stay.need.without, m.packUnit)}，住院让这次{needDelta(stay, m.packUnit)}
+                              </span>
+                            )}
                           </td>
                         </tr>
                       ))}
