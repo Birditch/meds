@@ -97,6 +97,19 @@ describe("a stay before the visit", () => {
   });
 });
 
+describe("a visit whose whole boxes come out the same either way", () => {
+  it("says the pills lacking differ but the boxes do not", () => {
+    // Visit on 12-10: 5 left with the stay (short 23), 0 without (short 28); 7 a box makes 4 boxes either way.
+    const r = visitReport(input({ visits: [{ id: 1, date: "2026-12-10" }] }))!;
+    const x = r.needed[0];
+    expect(x.stay!.need.with).toMatchObject({ need: 23, packs: 4 });
+    expect(x.stay!.need.without).toMatchObject({ need: 28, packs: 4 });
+    const lines = visitStayLines(x.stay!, { ...x.need, index: 0 }, NOW, "盒");
+    expect(lines.at(-2)).toBe("不算住院的话，12.03 晚上起就会断药，等不到这次复诊；住院让现有的药撑到了复诊");
+    expect(lines.at(-1)).toBe("结果：开药量不变：算上住院缺 23 颗，不算住院缺 28 颗，按整盒开都是 4 盒（28 颗）");
+  });
+});
+
 describe("a stay in the period a visit covers", () => {
   // 40 from 11-01 at 1 a day: 8 left after 12-02; 12-10 to 12-12 in hospital.
   const Y = med("药品Y", { perBox: 6, supply: 40, from: "2026-11-01" });

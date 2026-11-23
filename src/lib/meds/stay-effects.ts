@@ -302,7 +302,9 @@ export function needDelta(e: Pick<VisitStayEffect, "need">, unit: string): strin
 export function needChange(e: Pick<VisitStayEffect, "need">, unit: string): string {
   const { with: got, without: bare } = e.need;
   if (got.prescribed === bare.prescribed) {
-    return got.need === 0 ? "有没有住院都无需开药" : `开药量不变：有没有住院都开 ${needWords(got, unit)}`;
+    if (got.need === 0) return "有没有住院都无需开药";
+    if (got.need === bare.need) return `开药量不变：有没有住院都开 ${needWords(got, unit)}`;
+    return `开药量不变：算上住院缺 ${pills(got.need)}，不算住院缺 ${pills(bare.need)}，按整${unit}开都是 ${got.packs} ${unit}（${pills(got.prescribed)}）`;
   }
   const fewer = bare.prescribed - got.prescribed;
   const packs = got.packs !== null && bare.packs !== null ? bare.packs - got.packs : null;
